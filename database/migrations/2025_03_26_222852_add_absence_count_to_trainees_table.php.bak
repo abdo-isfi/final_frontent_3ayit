@@ -1,0 +1,24 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+class AddAbsenceCountToTraineesTable extends Migration
+{
+    public function up()
+    {
+        Schema::table('trainees', function (Blueprint $table) {
+            // Add the 'absence_count' column
+            $table->integer('absence_count')->default(0);  // You can set a default value if needed
+        });
+    }
+
+    public function down()
+    {
+        Schema::table('trainees', function (Blueprint $table) {
+            // Drop the 'absence_count' column if the migration is rolled back
+            $table->dropColumn('absence_count');
+        });
+    }
+}

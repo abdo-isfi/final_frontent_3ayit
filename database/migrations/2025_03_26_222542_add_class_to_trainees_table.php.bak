@@ -1,0 +1,24 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+class AddClassToTraineesTable extends Migration
+{
+    public function up()
+    {
+        Schema::table('trainees', function (Blueprint $table) {
+            // Add the 'class' column to the 'trainees' table
+            $table->string('class')->nullable(); // Adjust the type based on your needs (e.g., string, text, etc.)
+        });
+    }
+
+    public function down()
+    {
+        Schema::table('trainees', function (Blueprint $table) {
+            // Drop the 'class' column if the migration is rolled back
+            $table->dropColumn('class');
+        });
+    }
+}
