@@ -68,71 +68,71 @@ This section has moved here: [https://facebook.github.io/create-react-app/docs/d
 ### `npm run build` fails to minify
 
 This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
-=======
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+# MySQL Backend Setup
 
-## About Laravel
+## Database Configuration
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+1. Create a new MySQL database:
+```sql
+CREATE DATABASE absence_system CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+```
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+2. Copy the `.env.example` file to `.env`:
+```bash
+cp .env.example .env
+```
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+3. Edit the `.env` file and update the database connection details:
+```
+DB_CONNECTION=mysql
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_DATABASE=absence_system
+DB_USERNAME=your_mysql_username
+DB_PASSWORD=your_mysql_password
+```
 
-## Learning Laravel
+4. Generate an application key:
+```bash
+php artisan key:generate
+```
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework.
+5. Run migrations to create the database tables:
+```bash
+php artisan migrate
+```
 
-You may also try the [Laravel Bootcamp](https://bootcamp.laravel.com), where you will be guided through building a modern Laravel application from scratch.
+## API Endpoints
 
-If you don't feel like reading, [Laracasts](https://laracasts.com) can help. Laracasts contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+The backend exposes the following API endpoints:
 
-## Laravel Sponsors
+### Groups
+- `GET /api/groups` - Get all groups
+- `GET /api/groups/{id}` - Get specific group
+- `POST /api/groups` - Create a new group
+- `PUT /api/groups/{id}` - Update a group
+- `DELETE /api/groups/{id}` - Delete a group
+- `GET /api/groups/{id}/trainees` - Get all trainees in a group
 
-We would like to extend our thanks to the following sponsors for funding Laravel development. If you are interested in becoming a sponsor, please visit the [Laravel Partners program](https://partners.laravel.com).
+### Trainees
+- `GET /api/trainees` - Get all trainees
+- `GET /api/trainees/{id}` - Get specific trainee
+- `POST /api/trainees` - Create a new trainee
+- `PUT /api/trainees/{id}` - Update a trainee
+- `DELETE /api/trainees/{id}` - Delete a trainee
+- `GET /api/trainees/{id}/absences` - Get all absences for a trainee
+- `GET /api/trainees/{id}/statistics` - Get statistics for a trainee
+- `POST /api/trainees/bulk-import` - Bulk import trainees
 
-### Premium Partners
-
-- **[Vehikl](https://vehikl.com/)**
-- **[Tighten Co.](https://tighten.co)**
-- **[WebReinvent](https://webreinvent.com/)**
-- **[Kirschbaum Development Group](https://kirschbaumdevelopment.com)**
-- **[64 Robots](https://64robots.com)**
-- **[Curotec](https://www.curotec.com/services/technologies/laravel/)**
-- **[Cyber-Duck](https://cyber-duck.co.uk)**
-- **[DevSquad](https://devsquad.com/hire-laravel-developers)**
-- **[Jump24](https://jump24.co.uk)**
-- **[Redberry](https://redberry.international/laravel/)**
-- **[Active Logic](https://activelogic.com)**
-- **[byte5](https://byte5.de)**
-- **[OP.GG](https://op.gg)**
-
-## Contributing
-
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
-
-## Code of Conduct
-
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
-
-## Security Vulnerabilities
-
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
-
-## License
-
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
->>>>>>> 51145c5af38d0bf1fc0ae94ee884741ff0cde084
+### Absences
+- `GET /api/absences` - Get all absence records
+- `GET /api/absences/{id}` - Get specific absence record
+- `POST /api/absences` - Create a new absence record
+- `PUT /api/absences/{id}` - Update an absence record
+- `DELETE /api/absences/{id}` - Delete an absence record
+- `GET /api/groups/{id}/absences` - Get absences for a specific group
+- `POST /api/absences/validate` - Validate absences
+- `POST /api/absences/justify` - Justify absences
+- `PATCH /api/absences/{id}/billet-entree` - Mark trainee as having a billet d'entrée
+- `GET /api/groups/{id}/weekly-report` - Get weekly report for a group

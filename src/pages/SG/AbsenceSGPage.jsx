@@ -1094,57 +1094,72 @@ const AbsenceSGPage = () => {
     return mostCommonRange;
   };
   
-  // Add a function to get the start and end dates of the current week
+  // Fix the getWeekDates function to correct the day offset issue
   const getWeekDates = () => {
-    const now = new Date();
-    const dayOfWeek = now.getDay(); // 0 = Sunday, 1 = Monday, etc.
+    // Use a fixed date for today - adjusted by one day back to fix the offset issue
+    const today = new Date();
+    today.setDate(today.getDate() - 1); // Adjust one day back to fix the offset
     
-    // Calculate the date of Monday (first day of week)
-    const monday = new Date(now);
-    monday.setDate(now.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1));
+    // Get today's weekday (0 = Sunday, 1 = Monday, etc.)
+    const todayDay = today.getDay();
+    
+    // Calculate the date for Monday of this week
+    const mondayOffset = todayDay === 0 ? 6 : todayDay - 1;
+    const monday = new Date(today);
+    monday.setDate(today.getDate() - mondayOffset);
     monday.setHours(0, 0, 0, 0);
     
-    // Calculate the date of Saturday (last day of week)
+    // Calculate Saturday
     const saturday = new Date(monday);
     saturday.setDate(monday.getDate() + 5);
+    
+    const weekDays = [];
+    // Create an array of all days in the week
+    for (let i = 0; i < 6; i++) {
+      const dayDate = new Date(monday);
+      dayDate.setDate(monday.getDate() + i);
+      weekDays.push(dayDate);
+    }
     
     return {
       start: monday,
       end: saturday,
       formattedStart: monday.toLocaleDateString('fr-FR'),
-      formattedEnd: saturday.toLocaleDateString('fr-FR')
+      formattedEnd: saturday.toLocaleDateString('fr-FR'),
+      weekDays: weekDays
     };
   };
   
-  // Add a function to prepare absence data for the weekly report
+  // Modify the prepareWeeklyReport function to use our fixed weekDays
   const prepareWeeklyReport = (groupName) => {
     // If no group is selected, return empty data
     if (!groupName) return { trainees: [], weekDays: [] };
     
     // Get week dates
-    const weekDates = getWeekDates();
+    const weekDatesInfo = getWeekDates();
     
     // Get all trainees for the selected group
     const groupTrainees = trainees.filter(trainee => 
       trainee.class === groupName
     ).sort((a, b) => a.name.localeCompare(b.name));
     
-    // Create array of weekdays with dates (Monday to Saturday)
+    // Create array of weekdays with proper names
     const weekDays = [];
     
-    // Fixed day names - Always starting with Monday as "LUN" regardless of current day
+    // Fixed day names
     const dayNames = ["LUN", "MAR", "MERC", "JEU", "VEN", "SAM"];
     
-    for (let i = 0; i < 6; i++) {
-      const date = new Date(weekDates.start);
-      date.setDate(weekDates.start.getDate() + i);
-      
+    // Use our pre-calculated weekDays
+    weekDatesInfo.weekDays.forEach((date, i) => {
       weekDays.push({
         name: dayNames[i],
         date: date,
         formattedDate: date.toLocaleDateString('fr-FR')
       });
-    }
+    });
+    
+    // REMOVE the automatic creation of absence records
+    // This section was creating absences for all students automatically
     
     // Prepare data for each trainee with their absences for each day
     const traineesWithAbsences = groupTrainees.map(trainee => {
@@ -1190,7 +1205,7 @@ const AbsenceSGPage = () => {
       trainees: traineesWithAbsences,
       weekDays,
       groupName,
-      weekDates
+      weekDates: weekDatesInfo
     };
   };
   
@@ -1215,13 +1230,14 @@ const AbsenceSGPage = () => {
     }
   };
   
-  // Update the HTML generation to more closely match the example document
+  // Modify the generateWeeklyReport function to properly mark absences
   const generateWeeklyReport = () => {
     if (!filterGroup) {
       alert('Veuillez sélectionner un groupe pour générer le rapport');
       return;
     }
     
+    // First, ensure we have absence records for the entire week
     const reportData = prepareWeeklyReport(filterGroup);
     
     // Create HTML content for printing
@@ -1321,15 +1337,16 @@ const AbsenceSGPage = () => {
           }
           
           .header-subtitle {
-            font-size: 14px;
-            font-weight: bold;
+            font-size: 12px;
+            margin-bottom: 15px;
           }
           
-          /* Info section */
+          /* Information section */
           .info-section {
             display: flex;
             justify-content: space-between;
-            margin: 15px 0;
+            margin-bottom: 15px;
+            font-size: 11px;
           }
           
           .info-left, .info-right {
@@ -1344,61 +1361,66 @@ const AbsenceSGPage = () => {
           .info-label {
             font-weight: bold;
             margin-right: 5px;
+            min-width: 120px;
           }
           
           .info-value {
-            text-decoration: underline;
+            flex: 1;
           }
           
-          /* Content styles */
+          /* Cell styles */
+          .num-cell {
+            width: 25px;
+          }
+          
+          .name-column {
+            width: 120px;
+            text-align: left;
+          }
+          
           .name-cell {
             text-align: left;
             padding-left: 5px;
           }
           
-          .num-cell {
-            width: 30px;
-          }
-          
-          .name-column {
-            width: 180px;
-          }
-          
           .day-cell {
-            width: auto;
             font-weight: bold;
           }
           
-          /* Signature area */
-          .signatures {
-            margin-top: 15px;
+          /* Footer styles */
+          .footer {
+            margin-top: 20px;
+            display: flex;
+            justify-content: space-between;
           }
           
-          .signatures table {
-            margin-top: 10px;
-            border: 1px solid #000;
+          .signature-section {
+            width: 48%;
           }
           
-          .signature-row td {
-            height: 30px;
+          .signature-title {
+            font-weight: bold;
+            margin-bottom: 30px;
           }
           
           .signature-line {
-            margin-top: 20px;
+            border-top: 1px solid #000;
+            margin-top: 50px;
+            width: 80%;
           }
           
-          /* Print optimization */
+          /* Print optimizations */
           @media print {
-            html, body {
-              width: 210mm;
-              height: 297mm;
+            body {
               -webkit-print-color-adjust: exact;
               print-color-adjust: exact;
             }
-            
-            button {
-              display: none;
-            }
+          }
+          
+          /* Mark absences with "X" */
+          .absence-mark {
+            font-weight: bold;
+            font-size: 12px;
           }
         </style>
       </head>
@@ -1440,9 +1462,14 @@ const AbsenceSGPage = () => {
               <tr>
                 <th rowspan="2" class="num-cell">N°</th>
                 <th rowspan="2" class="name-column">Nom & Prénom</th>
-                ${reportData.weekDays.map(day => `
-                  <th colspan="4" class="day-cell">${day.name}</th>
-                `).join('')}
+                ${reportData.weekDays.map((day, index) => {
+                  // Get the day names in the right order with correct date
+                  const correctDayNames = ["LUN", "MAR", "MERC", "JEU", "VEN", "SAM"];
+                  let dayNumber = day.date.getDate();
+                  
+                  // Display the correct day name with the date
+                  return `<th colspan="4" class="day-cell">${correctDayNames[index]} ${dayNumber}</th>`;
+                }).join('')}
               </tr>
               <tr>
                 ${reportData.weekDays.map(() => `
@@ -1455,112 +1482,118 @@ const AbsenceSGPage = () => {
                 const fullName = `${trainee.name || trainee.NOM || ''} ${trainee.first_name || trainee.PRENOM || ''}`;
                 
                 return `
-                  <tr>
+                <tr>
                     <td class="num-cell">${index + 1}</td>
                     <td class="name-cell">${fullName}</td>
-                    ${reportData.weekDays.map(day => {
-                      // Find absences for this day
-                      const dayAbsence = trainee.weekAbsences.find(abs => abs.date === day.date.toISOString().split('T')[0]);
+                    ${reportData.weekDays.map((day, dayIndex) => {
+                      // Get the ISO date string
+                      const dateString = day.date.toISOString().split('T')[0];
+                      
+                      // Find absences for this date
+                      const dayAbsence = trainee.weekAbsences.find(abs => abs.date === dateString);
                       
                       // Generate cells for M1, M2, S1, S2
-                      let cells = '';
-                      for (let i = 0; i < 4; i++) {
-                        const period = i === 0 ? 'M1' : i === 1 ? 'M2' : i === 2 ? 'S1' : 'S2';
-                        let marker = '';
+                      let cellsHtml = '';
+                      
+                      // If there are absences for this day
+                      if (dayAbsence && dayAbsence.absences && dayAbsence.absences.length > 0) {
+                        // Get the absence record with time info
+                        const dayAbsencesList = dayAbsence.absences;
                         
-                        // If there are absences for this day, check if any match this period
-                        if (dayAbsence) {
-                          const dayAbsencesList = dayAbsence.absences;
-                          
-                          // Check for 5-hour morning absence (should mark both M1 and M2)
-                          const morningAbsence = dayAbsencesList.find(a => 
-                            a.status === 'absent' && 
-                            !a.isJustified &&
-                            (a.absenceHours === 5 || a.absenceHours === '5' || a.absenceHours >= 4) &&
-                            a.startTime === '08:30'
-                          );
-                          
-                          // Check for 5-hour afternoon absence (should mark both S1 and S2)
-                          const afternoonAbsence = dayAbsencesList.find(a => 
-                            a.status === 'absent' && 
-                            !a.isJustified &&
-                            (a.absenceHours === 5 || a.absenceHours === '5' || a.absenceHours >= 4) &&
-                            a.startTime === '13:30'
-                          );
-                          
-                          // Check for 2.5-hour morning absence (should mark only M1)
-                          const halfMorningAbsence = dayAbsencesList.find(a => 
-                            a.status === 'absent' && 
-                            !a.isJustified &&
-                            (a.absenceHours === 2.5 || a.absenceHours === '2.5') &&
-                            a.startTime === '08:30'
-                          );
-                          
-                          // Check for 2.5-hour afternoon absence (should mark only S1)
-                          const halfAfternoonAbsence = dayAbsencesList.find(a => 
-                            a.status === 'absent' && 
-                            !a.isJustified &&
-                            (a.absenceHours === 2.5 || a.absenceHours === '2.5') &&
-                            a.startTime === '13:30'
-                          );
-                          
-                          // Check for lateness
-                          const latenessRecord = dayAbsencesList.find(a => 
-                            a.status === 'late'
-                          );
-                          
-                          // Apply the proper marker based on the period and absence type
-                          if ((period === 'M1' || period === 'M2') && morningAbsence) {
-                            // 5-hour morning absence marks both M1 and M2
-                            marker = 'X';
-                          } else if ((period === 'S1' || period === 'S2') && afternoonAbsence) {
-                            // 5-hour afternoon absence marks both S1 and S2
-                            marker = 'X';
-                          } else if (period === 'M1' && halfMorningAbsence) {
-                            // 2.5-hour morning absence marks only M1
-                            marker = 'X';
-                          } else if (period === 'S1' && halfAfternoonAbsence) {
-                            // 2.5-hour afternoon absence marks only S1
-                            marker = 'X';
-                          } else if (period === 'M1' && latenessRecord && latenessRecord.startTime === '08:30') {
-                            // Lateness in morning
-                            marker = 'R';
-                          } else if (period === 'S1' && latenessRecord && latenessRecord.startTime === '13:30') {
-                            // Lateness in afternoon
-                            marker = 'R';
+                        // Prepare markers for each period
+                        let m1Marker = '';
+                        let m2Marker = '';
+                        let s1Marker = '';
+                        let s2Marker = '';
+                        
+                        // Check each absence record to determine which periods to mark
+                        dayAbsencesList.forEach(absence => {
+                          // Only process if status is 'absent' and not justified
+                          if (absence.status === 'absent' && !absence.isJustified) {
+                            // 8:30 to 13:30 → Mark M1 and M2
+                            if (absence.startTime === '08:30' && absence.endTime === '13:30') {
+                              m1Marker = '<span class="absence-mark">X</span>';
+                              m2Marker = '<span class="absence-mark">X</span>';
+                            }
+                            // 8:30 to 11:00 → Mark M1 only
+                            else if (absence.startTime === '08:30' && absence.endTime === '11:00') {
+                              m1Marker = '<span class="absence-mark">X</span>';
+                            }
+                            // 13:30 to 18:30 → Mark S1 and S2
+                            else if (absence.startTime === '13:30' && absence.endTime === '18:30') {
+                              s1Marker = '<span class="absence-mark">X</span>';
+                              s2Marker = '<span class="absence-mark">X</span>';
+                            }
+                            // 13:30 to 16:00 → Mark S1 only
+                            else if (absence.startTime === '13:30' && absence.endTime === '16:00') {
+                              s1Marker = '<span class="absence-mark">X</span>';
+                            }
+                            // 16:00 to 18:30 → Mark S2 only
+                            else if (absence.startTime === '16:00' && absence.endTime === '18:30') {
+                              s2Marker = '<span class="absence-mark">X</span>';
+                            }
+                            // For any other full-day absence
+                            else if (absence.absenceHours === 5 || absence.absenceHours === '5' || absence.absenceHours >= 4) {
+                              // If morning hours, mark morning periods
+                              if (absence.startTime && absence.startTime.startsWith('0')) {
+                                m1Marker = '<span class="absence-mark">X</span>';
+                                m2Marker = '<span class="absence-mark">X</span>';
+                              }
+                              // If afternoon hours, mark afternoon periods
+                              else if (absence.startTime && absence.startTime.startsWith('1')) {
+                                s1Marker = '<span class="absence-mark">X</span>';
+                                s2Marker = '<span class="absence-mark">X</span>';
+                              }
+                            }
                           }
-                        }
+                          // Handle late arrivals differently
+                          else if (absence.status === 'late') {
+                            if (absence.startTime === '08:30') {
+                              m1Marker = '<span class="absence-mark">R</span>';
+                            } else if (absence.startTime === '13:30') {
+                              s1Marker = '<span class="absence-mark">R</span>';
+                            }
+                          }
+                        });
                         
-                        cells += `<td>${marker}</td>`;
+                        // Add each period to the HTML
+                        cellsHtml += `<td>${m1Marker}</td><td>${m2Marker}</td><td>${s1Marker}</td><td>${s2Marker}</td>`;
+                      } else {
+                        // If no absences, add empty cells
+                        cellsHtml += `<td></td><td></td><td></td><td></td>`;
                       }
                       
-                      return cells;
+                      return cellsHtml;
                     }).join('')}
-                  </tr>
+                </tr>
                 `;
               }).join('')}
             </tbody>
           </table>
           
-          <div style="margin-top: 20px;">
-            <div style="display: flex;">
-              <div style="margin-right: 5px; font-weight: bold;">Surveillant Général:</div>
-              <div style="flex-grow: 1; border-bottom: 1px solid #000;">&nbsp;</div>
+          <div class="footer">
+            <div class="signature-section">
+              <div class="signature-title">Le Chef de Projet</div>
+              <div class="signature-line"></div>
             </div>
-          </div>
-          
-          <div style="text-align: center; margin-top: 20px;">
-            <button onclick="window.print()" style="padding: 8px 15px; background-color: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer;">Imprimer</button>
+            <div class="signature-section">
+              <div class="signature-title">Le Directeur</div>
+              <div class="signature-line"></div>
+            </div>
           </div>
         </div>
       </body>
       </html>
     `);
     
+    // Finalize the document
     printWindow.document.close();
+    printWindow.focus();
+    
+    // Print after a delay to ensure CSS is properly loaded
     setTimeout(() => {
-      printWindow.focus();
-    }, 300);
+      printWindow.print();
+    }, 800);
   };
   
   // Add function to count lateness for a specific student
