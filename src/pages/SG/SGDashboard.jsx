@@ -1,7 +1,5 @@
 import React from 'react';
 import DashboardCard from '../../components/DashboardCard.jsx';
-import traineesImage from '../../images/trainees.jpeg';
-import trainersImage from '../../images/trainers.jpeg'; 
 import '../../index.css';
 
 const SGDashboard = () => {
@@ -18,28 +16,35 @@ const SGDashboard = () => {
             title="Gérer Stagiaires"
             subtitle="Accéder à la gestion des stagiaires"
             path="/sg/gerer-stagiaires"
-            image={traineesImage}
+            iconBgColor="#2ecc71"
+          />
+          
+          <DashboardCard
+            title="Liste des Stagiaires"
+            subtitle="Ajouter, modifier ou supprimer des stagiaires"
+            path="/sg/trainees-list"
+            iconBgColor="#9b59b6"
           />
           
           <DashboardCard
             title="Formateurs"
             subtitle="Gérer les formateurs"
             path="/sg/gerer-formateurs"
-            image={trainersImage}
+            iconBgColor="#3498db"
           />
           
           <DashboardCard
             title="Tableau de Bord"
             subtitle="Statistiques et aperçu global"
             path="/sg/dashboard"
-            image={trainersImage}
+            iconBgColor="#9b59b6"
           />
           
           <DashboardCard
             title="Gestion des Absences"
             subtitle="Suivre et gérer les absences"
             path="/sg/absence"
-            image={traineesImage}
+            iconBgColor="#e74c3c"
           />
         </div>
       </div>

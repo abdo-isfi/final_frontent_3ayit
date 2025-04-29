@@ -1,18 +1,35 @@
 import React from "react";
-import { Link, useNavigate } from "react-router-dom";
+import {  useNavigate } from "react-router-dom";
 import PropTypes from "prop-types";
 import "../index.css";
+import { Modal } from "react-bootstrap";
 
-const DashboardCard = ({ title, subtitle, path, image, showButton = true }) => {
+const DashboardCard = ({ title, subtitle, path, iconClass = "fas fa-tasks", iconBgColor = "#3498db", showButton = true }) => {
   const navigate = useNavigate();
+  
+  // Determine appropriate icon based on title
+  const getIconClass = () => {
+    const titleLower = title.toLowerCase();
+    
+    if (titleLower.includes("stagiaire") || titleLower.includes("stagiaires")) {
+      return "fas fa-user-graduate";
+    } else if (titleLower.includes("formateur") || titleLower.includes("formateurs")) {
+      return "fas fa-chalkboard-teacher";
+    } else if (titleLower.includes("absence") || titleLower.includes("absences")) {
+      return "fas fa-calendar-times";
+    } else if (titleLower.includes("emploi") || titleLower.includes("temps")) {
+      return "fas fa-calendar-alt";
+    } else if (titleLower.includes("tableau") || titleLower.includes("bord") || titleLower.includes("statistique")) {
+      return "fas fa-chart-line";
+    } else {
+      return iconClass; // Default icon
+    }
+  };
   
   return (
     <div className="dashboard-card">
-      <div className="card-image-container">
-        <div
-          className="card-image"
-          style={{ backgroundImage: `url(${image})` }}
-        />
+      <div className="card-icon-container" style={{ backgroundColor: iconBgColor }}>
+        <i className={getIconClass()}></i>
       </div>
       <div className="card-content">
         <h3 className="card-title">{title}</h3>
@@ -45,37 +62,23 @@ const DashboardCard = ({ title, subtitle, path, image, showButton = true }) => {
           box-shadow: var(--shadow-lg);
         }
         
-        .card-image-container {
-          height: 200px;
+        .card-icon-container {
+          height: 160px;
           position: relative;
           overflow: hidden;
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          color: white;
         }
         
-        .card-image {
-          width: 100%;
-          height: 100%;
-          background-size: cover;
-          background-position: center;
-          transition: transform 0.5s ease;
-          position: relative;
+        .card-icon-container i {
+          font-size: 4rem;
+          transition: transform 0.3s ease;
         }
         
-        .card-image::before {
-          content: "";
-          position: absolute;
-          top: 0;
-          left: 0;
-          right: 0;
-          bottom: 0;
-          background: linear-gradient(
-            to bottom,
-            rgba(0, 0, 0, 0.1) 0%,
-            rgba(0, 0, 0, 0.3) 100%
-          );
-        }
-        
-        .dashboard-card:hover .card-image {
-          transform: scale(1.05);
+        .dashboard-card:hover .card-icon-container i {
+          transform: scale(1.1);
         }
         
         .card-content {
@@ -128,7 +131,8 @@ DashboardCard.propTypes = {
   title: PropTypes.string.isRequired,
   subtitle: PropTypes.string.isRequired,
   path: PropTypes.string.isRequired,
-  image: PropTypes.string.isRequired,
+  iconClass: PropTypes.string,
+  iconBgColor: PropTypes.string,
   showButton: PropTypes.bool
 };
 

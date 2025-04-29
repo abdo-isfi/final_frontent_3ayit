@@ -114,21 +114,22 @@ const customStyles = `
     top: 20px;
     right: 20px;
     z-index: 9999;
-    max-width: 350px;
+    max-width: 400px;
     width: 100%;
   }
   
   .toast {
     margin-bottom: 10px;
-    padding: 15px;
-    border-radius: 5px;
-    box-shadow: 0 3px 10px rgba(0,0,0,0.2);
+    padding: 15px 20px;
+    border-radius: 8px;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.3);
     display: flex;
     justify-content: space-between;
     align-items: center;
-    animation: slideIn 0.3s ease forwards;
+    animation: slideIn 0.4s ease forwards;
     opacity: 0;
     transform: translateX(50px);
+    font-weight: 500;
   }
   
   .toast-error {
@@ -159,9 +160,15 @@ const customStyles = `
     background: none;
     border: none;
     color: white;
-    font-size: 20px;
+    font-size: 22px;
     cursor: pointer;
     margin-left: 15px;
+    opacity: 0.8;
+    transition: opacity 0.2s;
+  }
+  
+  .toast-close:hover {
+    opacity: 1;
   }
   
   @keyframes slideIn {
@@ -256,6 +263,9 @@ const AbsencePage = () => {
     filiere: false,
     groupe: false,
   });
+  // Add a new state to track if there are existing absences
+  const [existingAbsences, setExistingAbsences] = useState([]);
+  const [hasConflict, setHasConflict] = useState(false);
 
   // Toast notification state
   const [toasts, setToasts] = useState([]);
@@ -427,26 +437,47 @@ const AbsencePage = () => {
       return;
     }
     
+    // Clear previous error and conflict state
+    setErrors((prev) => ({ ...prev, groupe: false }));
+    setHasConflict(false);
+    setExistingAbsences([]);
+    
     // Check if absences for this group and date have already been submitted
     try {
       const existingRecordsJSON = localStorage.getItem("absenceRecords") || "[]";
       const existingRecords = JSON.parse(existingRecordsJSON);
       
       // Check for any absences with the same group and date
-      const sameGroupDate = existingRecords.filter(record => 
+      const sameGroupDateRecords = existingRecords.filter(record => 
         record.groupe === selectedGroupe && 
         record.date === absenceDate
       );
       
-      if (sameGroupDate.length > 0) {
-        showToast(`Les absences pour ce groupe (${selectedGroupe}) et cette date (${absenceDate}) ont déjà été enregistrées. Vous ne pouvez pas soumettre plusieurs fois les absences pour le même groupe dans la même journée.`, "warning");
-        // Still allow viewing but show warning
+      // Store the existing records
+      setExistingAbsences(sameGroupDateRecords);
+      
+      if (sameGroupDateRecords.length > 0) {
+        // Format existing records into readable time slots
+        const timeSlots = sameGroupDateRecords.map(record => 
+          `${record.startTime} - ${record.endTime}`
+        ).join(', ');
+        
+        // Set the conflict flag
+        setHasConflict(true);
+        
+        showToast(
+          `⚠️ ATTENTION: Des absences pour ce groupe (${selectedGroupe}) et cette date (${absenceDate}) existent déjà aux horaires: ${timeSlots}. 
+          Vous ne pouvez pas soumettre à nouveau dans ces créneaux horaires.`, 
+          "warning",
+          10000
+        );
+        
+        // Continue to show students but with warning
       }
     } catch (error) {
       console.error("Error checking existing absences:", error);
     }
 
-    setErrors((prev) => ({ ...prev, groupe: false }));
     setFilteredGroupe(selectedGroupe);
 
     const filtered = stagiaires.filter((student) => {
@@ -478,6 +509,16 @@ const AbsencePage = () => {
     
     setFilteredStagiaires(filtered);
     setFilterApplied(true);
+    
+    if (filtered.length === 0) {
+      showToast(`Aucun stagiaire trouvé pour le groupe ${selectedGroupe}.`, "info");
+    } else {
+      const message = hasConflict 
+        ? `${filtered.length} stagiaires trouvés pour le groupe ${selectedGroupe}. Attention: des absences existent déjà pour ce groupe.`
+        : `${filtered.length} stagiaires trouvés pour le groupe ${selectedGroupe}.`;
+        
+      showToast(message, hasConflict ? "warning" : "info");
+    }
   };
 
   const handleYearChange = (e) => {
@@ -578,23 +619,55 @@ const AbsencePage = () => {
 
     const groupe = selectedGroupe || filteredGroupe;
 
-    // Check if absences for this group and date have already been submitted
-    // (regardless of time period)
-    try {
-      const existingRecordsJSON = localStorage.getItem("absenceRecords") || "[]";
-      const existingRecords = JSON.parse(existingRecordsJSON);
-      
-      const alreadySubmittedSameDay = existingRecords.some(record => 
-        record.groupe === groupe && 
-        record.date === absenceDate
-      );
-      
-      if (alreadySubmittedSameDay) {
-        showToast("Les absences pour ce groupe et cette date ont déjà été enregistrées et envoyées au Surveillant Général. Vous ne pouvez soumettre les absences d'un groupe qu'une seule fois par jour.", "error");
-        return;
+    // Check for conflicts with existing absences
+    let hasTimeConflict = false;
+    let conflictRecord = null;
+    
+    // First check our stored existing absences (from the filter step)
+    if (existingAbsences.length > 0) {
+      for (const record of existingAbsences) {
+        if ((startTime >= record.startTime && startTime < record.endTime) ||
+            (endTime > record.startTime && endTime <= record.endTime) ||
+            (startTime <= record.startTime && endTime >= record.endTime)) {
+          hasTimeConflict = true;
+          conflictRecord = record;
+          break;
+        }
       }
-    } catch (error) {
-      console.error("Error checking existing absences:", error);
+    }
+    
+    // Double-check with fresh data from localStorage
+    if (!hasTimeConflict) {
+      try {
+        const existingRecordsJSON = localStorage.getItem("absenceRecords") || "[]";
+        const existingRecords = JSON.parse(existingRecordsJSON);
+        
+        const conflictingRecords = existingRecords.filter(record => 
+          record.groupe === groupe && 
+          record.date === absenceDate &&
+          ((startTime >= record.startTime && startTime < record.endTime) ||
+           (endTime > record.startTime && endTime <= record.endTime) ||
+           (startTime <= record.startTime && endTime >= record.endTime))
+        );
+        
+        if (conflictingRecords.length > 0) {
+          hasTimeConflict = true;
+          conflictRecord = conflictingRecords[0];
+        }
+      } catch (error) {
+        console.error("Error checking for absence conflicts:", error);
+      }
+    }
+    
+    // If conflict exists, show error and don't proceed
+    if (hasTimeConflict && conflictRecord) {
+      showToast(
+        `⛔ ERREUR: Une fiche d'absence existe déjà pour le groupe ${groupe} le ${absenceDate} de ${conflictRecord.startTime} à ${conflictRecord.endTime}.
+        Vous ne pouvez pas soumettre des absences qui se chevauchent avec cette période.`, 
+        "error",
+        10000
+      );
+      return;
     }
 
     // Get the selected students' data for the absence record
@@ -610,6 +683,11 @@ const AbsencePage = () => {
       };
     });
 
+    // Count absences and late students for the report
+    const absenceCount = studentsWithStatus.filter(s => s.status === "absent").length;
+    const lateCount = studentsWithStatus.filter(s => s.status === "late").length;
+    const presentCount = studentsWithStatus.filter(s => s.status === "present").length;
+
     // Create the absence record
     const absenceRecord = {
       date: absenceDate,
@@ -617,6 +695,7 @@ const AbsencePage = () => {
       endTime,
       groupe: selectedGroupe || filteredGroupe,
       students: studentsWithStatus,
+      submittedAt: new Date().toISOString(), // Add submission timestamp
     };
 
     // Get current user information for the teacher record
@@ -667,7 +746,11 @@ const AbsencePage = () => {
           status: student.status,
           groupe: student.groupe,
           teacher: teacherName,
-          teacherId: absenceRecord.teacherId
+          teacherId: absenceRecord.teacherId,
+          // Ensure these fields are present for SG page
+          isValidated: false,
+          isJustified: false,
+          hasBilletEntree: false
         };
         
         // Initialize array if it doesn't exist
@@ -682,13 +765,23 @@ const AbsencePage = () => {
       // Save student absences back to localStorage
       localStorage.setItem("studentAbsences", JSON.stringify(studentAbsences));
 
+      // Trigger storage event for other tabs (like SG page)
+      window.dispatchEvent(new Event('storage'));
+
+      // Show a detailed success message
       showToast(
-        `Les absences ont été enregistrées avec succès pour ${studentsWithStatus.length} stagiaires.`,
-        "success"
+        `✅ SUCCÈS: Fiche d'absence enregistrée pour ${groupe} le ${absenceDate} de ${startTime} à ${endTime}.
+        ${presentCount} présents, ${absenceCount} absents, ${lateCount} retards.`,
+        "success",
+        7000
       );
 
       // Reset form after successful submission
       resetForm();
+      
+      // Also reset conflict state
+      setHasConflict(false);
+      setExistingAbsences([]);
     } catch (error) {
       console.error("Error saving absence data:", error);
       showToast("Une erreur s'est produite lors de l'enregistrement des absences.", "error");
@@ -753,6 +846,27 @@ const AbsencePage = () => {
       <button className="back-button" onClick={handleBack}>
         ⬅ Retour
       </button>
+
+      {/* Display warning banner if there are conflicts */}
+      {hasConflict && (
+        <div style={{
+          backgroundColor: '#fff3cd',
+          color: '#856404',
+          padding: '15px',
+          margin: '15px 0',
+          borderRadius: '5px',
+          border: '1px solid #ffeeba',
+          display: 'flex',
+          alignItems: 'center',
+          fontSize: '1.1rem'
+        }}>
+          <span style={{ fontSize: '1.5rem', marginRight: '10px' }}>⚠️</span>
+          <span>
+            <strong>Attention:</strong> Des absences existent déjà pour ce groupe à cette date. 
+            Veuillez vérifier les horaires existants avant de soumettre de nouvelles absences.
+          </span>
+        </div>
+      )}
 
       <div className="form-controls">
         <div className="control-row" style={{ display: 'flex', alignItems: 'center', marginBottom: '15px' }}>

@@ -21,6 +21,9 @@ const SGNavbar = ({ onLogout }) => {
           <NavLink to="/sg/gerer-stagiaires" className="nav-link">
             Stagiaires
           </NavLink>
+          <NavLink to="/sg/trainees-list" className="nav-link">
+            Liste Stagiaires
+          </NavLink>
           <NavLink to="/sg/gerer-formateurs" className="nav-link">
             Formateurs
           </NavLink>

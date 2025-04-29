@@ -19,6 +19,7 @@ import ManageTrainees from "./pages/SG/ManageTrainees.jsx";
 import ManageTheachers from "./pages/SG/ManageTheachers.jsx";
 import SGUploadStagiaire from "./pages/SG/UploadStagiaire.jsx";
 import TraineeDetailsPage from "./pages/SG/TraineeDetailsPage.jsx";
+import TraineesListPage from "./pages/SG/TraineesListPage.jsx";
 
 // Admin Pages
 import LoginPage from "./pages/auth/LoginPage.jsx";
@@ -168,6 +169,16 @@ function App() {
             element={
               isAuthenticated && userRole === "sg" ? (
                 <TraineeDetailsPage />
+              ) : (
+                <Navigate to="/login" replace />
+              )
+            }
+          />
+          <Route
+            path="/sg/trainees-list"
+            element={
+              isAuthenticated && userRole === "sg" ? (
+                <TraineesListPage />
               ) : (
                 <Navigate to="/login" replace />
               )

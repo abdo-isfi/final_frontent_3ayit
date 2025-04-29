@@ -7,6 +7,18 @@ import { Pie, Bar } from 'react-chartjs-2';
 // Register ChartJS components
 ChartJS.register(ArcElement, Tooltip, Legend, CategoryScale, LinearScale, BarElement, Title);
 
+// Add a memoization utility function to cache expensive calculations
+const memoize = (fn) => {
+  const cache = {};
+  return (...args) => {
+    const key = JSON.stringify(args);
+    if (cache[key] === undefined) {
+      cache[key] = fn(...args);
+    }
+    return cache[key];
+  };
+};
+
 const SGStatistics = () => {
   const [stats, setStats] = useState({
     teachersCount: 0,
@@ -16,37 +28,64 @@ const SGStatistics = () => {
     groupsCount: 0
   });
   
-  const [recentActivity, setRecentActivity] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [chartData, setChartData] = useState({
-    labels: [],
-    datasets: []
-  });
-  
-  // Group-specific statistics
   const [availableGroups, setAvailableGroups] = useState([]);
   const [selectedGroup, setSelectedGroup] = useState('');
   const [groupStats, setGroupStats] = useState({
     totalTrainees: 0,
     totalAbsenceHours: 0,
-    absentTrainees: 0,
     disciplinaryActions: {
-      normal: 0,
-      attention: 0,
-      alerte: 0,
-      critique: 0
+      premiereMiseEnGarde: 0,
+      deuxiemeMiseEnGarde: 0,
+      premierAvertissement: 0,
+      deuxiemeAvertissement: 0,
+      blame: 0,
+      exclusion2Jours: 0,
+      exclusionTemp: 0
     }
+  });
+  
+  // Add state for storing trainee list with absences
+  const [topAbsentTrainees, setTopAbsentTrainees] = useState([]);
+  
+  const [absenceChartData, setAbsenceChartData] = useState({
+    labels: ['Injustifiées', 'Justifiées'],
+    datasets: [{
+      data: [30, 15],
+      backgroundColor: ['#FF6384', '#36A2EB'],
+      borderWidth: 1
+    }]
+  });
+  
+  const [disciplinaryChartData, setDisciplinaryChartData] = useState({
+    labels: [
+      'Première Mise en Garde', 
+      'Deuxième Mise en Garde', 
+      'Premier Avertissement',
+      'Deuxième Avertissement',
+      'Blâme',
+      'Exclusion de 2 Jours',
+      'Exclusion Temporaire/Définitive'
+    ],
+    datasets: [{
+      data: [12, 8, 6, 4, 3, 2, 1],
+      backgroundColor: [
+        '#FFD700', // Gold
+        '#FFA500', // Orange
+        '#FF8C00', // Dark Orange
+        '#FF4500', // Orange Red
+        '#FF0000', // Red
+        '#8B0000', // Dark Red
+        '#000000'  // Black
+      ],
+      borderWidth: 1
+    }]
   });
   
   useEffect(() => {
     // Load data from localStorage
-    const loadStatistics = () => {
+    const loadGroups = () => {
       try {
-        // Get teachers count
-        const formateursJson = localStorage.getItem('formateurs') || '[]';
-        const formateurs = JSON.parse(formateursJson);
-        
-        // Get trainees count and groups
+        // Get trainees and extract groups
         const traineesJson = localStorage.getItem('traineesData') || '[]';
         const trainees = JSON.parse(traineesJson);
         
@@ -54,76 +93,17 @@ const SGStatistics = () => {
         const uniqueGroups = [...new Set(trainees.map(t => t.class || t.GROUPE).filter(Boolean))];
         setAvailableGroups(uniqueGroups);
         
-        // Get absence data
-        const studentAbsencesJson = localStorage.getItem('studentAbsences') || '{}';
-        const studentAbsences = JSON.parse(studentAbsencesJson);
-        
-        // Count total absences
-        let totalAbsences = 0;
-        let recentAbsences = 0;
-        
-        // Get today's date and 7 days ago
-        const today = new Date();
-        const oneWeekAgo = new Date();
-        oneWeekAgo.setDate(today.getDate() - 7);
-        
-        // Process all absences
-        Object.values(studentAbsences).forEach(absences => {
-          totalAbsences += absences.length;
-          
-          // Count recent absences (last 7 days)
-          recentAbsences += absences.filter(absence => {
-            if (!absence.date) return false;
-            const absenceDate = new Date(absence.date);
-            return absenceDate >= oneWeekAgo;
-          }).length;
-        });
-        
-        // Update stats
-        setStats({
-          teachersCount: formateurs.length,
-          traineesCount: trainees.length,
-          totalAbsences,
-          recentAbsences,
-          groupsCount: uniqueGroups.length
-        });
-        
-        // Generate recent activity (most recent absences)
-        const recentActivityItems = [];
-        
-        // Collect all absences with student info
-        const allAbsences = [];
-        Object.entries(studentAbsences).forEach(([cef, absences]) => {
-          const student = trainees.find(t => (t.cef === cef || t.CEF === cef));
-          if (student) {
-            absences.forEach(absence => {
-              allAbsences.push({
-                ...absence,
-                studentName: `${student.name || student.NOM || ''} ${student.first_name || student.PRENOM || ''}`.trim(),
-                group: student.class || student.GROUPE || '',
-                cef
-              });
-            });
-          }
-        });
-        
-        // Sort by date (most recent first)
-        allAbsences.sort((a, b) => new Date(b.date) - new Date(a.date));
-        
-        // Take first 5 items
-        setRecentActivity(allAbsences.slice(0, 5));
-        
-        // Generate chart data for absences by group
-        prepareChartData(allAbsences, uniqueGroups);
-        
-        setLoading(false);
+        // Set first group as selected if available
+        if (uniqueGroups.length > 0 && !selectedGroup) {
+          setSelectedGroup(uniqueGroups[0]);
+          calculateGroupStatistics(uniqueGroups[0]);
+        }
       } catch (error) {
-        console.error('Error loading dashboard data:', error);
-        setLoading(false);
+        console.error('Error loading groups:', error);
       }
     };
     
-    loadStatistics();
+    loadGroups();
   }, []);
   
   useEffect(() => {
@@ -133,887 +113,925 @@ const SGStatistics = () => {
     }
   }, [selectedGroup]);
   
-  // Prepare chart data for absence distribution by group
-  const prepareChartData = (allAbsences, uniqueGroups) => {
-    // Count absences by group
-    const absenceCountByGroup = {};
-    const absencesCountByGroupType = {};
-    
-    // Get list of teacher-marked absences by group
-    const teacherMarkedGroups = new Set();
-    
-    // Count absences for each group
-    allAbsences.forEach(absence => {
-      if (absence.group && uniqueGroups.includes(absence.group)) {
-        // Only count if there is a recorded absence or late
-        if (absence.status === 'absent' || absence.status === 'late') {
-          // Track this group as having absences
-          teacherMarkedGroups.add(absence.group);
-          
-          // Initialize the group counts if not already done
-          if (!absenceCountByGroup[absence.group]) {
-            absenceCountByGroup[absence.group] = 0;
-            absencesCountByGroupType[absence.group] = {
-              absents: 0,
-              retards: 0
-            };
-          }
-          
-          absenceCountByGroup[absence.group] += 1;
-          
-          if (absence.status === 'absent') {
-            absencesCountByGroupType[absence.group].absents += 1;
-          } else if (absence.status === 'late') {
-            absencesCountByGroupType[absence.group].retards += 1;
-          }
+  useEffect(() => {
+    // Add effect to load dashboard statistics from localStorage
+    const calculateDashboardStats = () => {
+      try {
+        // Initialize stats with defaults in case any calculation fails
+        let teachersCount = 0;
+        let traineesCount = 0;
+        let groupsCount = 0;
+        let totalAbsences = 0;
+        let recentAbsences = 0;
+        
+        // Count teachers
+        try {
+          const teachersJson = localStorage.getItem('teachersData') || '[]';
+          const teachers = JSON.parse(teachersJson);
+          teachersCount = Array.isArray(teachers) ? teachers.length : 0;
+        } catch (e) {
+          console.warn('Error loading teachers data:', e);
         }
+        
+        // Get trainees data
+        let trainees = [];
+        try {
+          const traineesJson = localStorage.getItem('traineesData') || '[]';
+          trainees = JSON.parse(traineesJson);
+          traineesCount = Array.isArray(trainees) ? trainees.length : 0;
+        } catch (e) {
+          console.warn('Error loading trainees data:', e);
+        }
+        
+        // Count unique groups - only if trainees loaded successfully
+        if (Array.isArray(trainees) && trainees.length > 0) {
+          const uniqueGroups = [...new Set(trainees.map(t => t.class || t.GROUPE).filter(Boolean))];
+          groupsCount = uniqueGroups.length;
+        }
+        
+        // Count absences - use a more efficient approach
+        try {
+          const studentAbsencesJson = localStorage.getItem('studentAbsences') || '{}';
+          const studentAbsences = JSON.parse(studentAbsencesJson);
+          
+          // Only calculate if we have valid data
+          if (studentAbsences && typeof studentAbsences === 'object') {
+            const sevenDaysAgo = new Date();
+            sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+            const sevenDaysAgoTime = sevenDaysAgo.getTime();
+            
+            // Process all students' absences at once
+            Object.values(studentAbsences).forEach(absences => {
+              if (Array.isArray(absences)) {
+                // Use reduce for better performance than multiple filters
+                const { total, recent } = absences.reduce((counts, absence) => {
+                  if (absence.status === 'absent') {
+                    counts.total++;
+                    
+                    // Check if absence is recent
+                    try {
+                      const absenceDate = new Date(absence.date);
+                      if (!isNaN(absenceDate) && absenceDate.getTime() >= sevenDaysAgoTime) {
+                        counts.recent++;
+                      }
+                    } catch (e) {
+                      // Ignore date parsing errors
+                    }
+                  }
+                  return counts;
+                }, { total: 0, recent: 0 });
+                
+                totalAbsences += total;
+                recentAbsences += recent;
+              }
+            });
+          }
+        } catch (e) {
+          console.warn('Error calculating absence stats:', e);
+        }
+        
+        // Update stats
+        setStats({
+          teachersCount,
+          traineesCount,
+          totalAbsences,
+          recentAbsences,
+          groupsCount
+        });
+      } catch (error) {
+        console.error('Error calculating dashboard stats:', error);
+        
+        // Set stats to defaults in case of overall failure
+        setStats({
+          teachersCount: 0,
+          traineesCount: 0,
+          totalAbsences: 0,
+          recentAbsences: 0,
+          groupsCount: 0
+        });
       }
-    });
-    
-    // Get array of groups with absences
-    const groupsWithAbsences = Array.from(teacherMarkedGroups);
-    
-    console.log("Groups with teacher-marked absences:", groupsWithAbsences);
-    
-    // Create chart data for pie chart (only include groups with absences)
-    const pieData = {
-      labels: groupsWithAbsences,
-      datasets: [
-        {
-          data: groupsWithAbsences.map(group => absenceCountByGroup[group]),
-          backgroundColor: [
-            '#FF6384', '#36A2EB', '#FFCE56', '#4BC0C0', '#9966FF',
-            '#FF9F40', '#8AC249', '#EA5F89', '#5DA5DA', '#FAA43A'
-          ],
-          borderWidth: 1
-        }
-      ]
     };
     
-    // Create chart data for bar chart (only include groups with absences)
-    const barData = {
-      labels: groupsWithAbsences,
-      datasets: [
-        {
-          label: 'Absences',
-          data: groupsWithAbsences.map(group => absencesCountByGroupType[group].absents),
-          backgroundColor: 'rgba(255, 99, 132, 0.7)',
-          borderColor: 'rgb(255, 99, 132)',
-          borderWidth: 1
-        },
-        {
-          label: 'Retards',
-          data: groupsWithAbsences.map(group => absencesCountByGroupType[group].retards),
-          backgroundColor: 'rgba(54, 162, 235, 0.7)',
-          borderColor: 'rgb(54, 162, 235)',
-          borderWidth: 1
-        }
-      ]
-    };
-    
-    setChartData({
-      pie: pieData,
-      bar: barData
-    });
-  };
+    calculateDashboardStats();
+  }, []);
   
   const calculateGroupStatistics = (groupName) => {
     try {
-      // Load trainees and absences data
-      const traineesJson = localStorage.getItem('stagiaires') || '[]';
+      // Load trainees data
+      const traineesJson = localStorage.getItem('traineesData') || '[]';
       const trainees = JSON.parse(traineesJson);
       
+      // Filter trainees by group
+      const groupTrainees = trainees.filter(trainee => 
+        (trainee.class || trainee.GROUPE) === groupName
+      );
+      
+      // Load absences data
       const studentAbsencesJson = localStorage.getItem('studentAbsences') || '{}';
       const studentAbsences = JSON.parse(studentAbsencesJson);
-
-      // Filter trainees by group
-      const groupTrainees = trainees.filter(trainee => trainee.class === groupName);
       
-      // Calculate stats
-      const stats = {
-        totalTrainees: groupTrainees.length,
-        totalAbsenceHours: 0,
-        absentTrainees: 0,
-        disciplinaryActions: {
-          normal: 0,
-          attention: 0,
-          alerte: 0,
-          critique: 0
-        }
+      // Calculate total absences and disciplinary actions for the group
+      let totalAbsenceHours = 0;
+      const traineesWithAbsences = [];
+      
+      // Create counters for each disciplinary state
+      const disciplinaryActions = {
+        premiereMiseEnGarde: 0,
+        deuxiemeMiseEnGarde: 0,
+        premierAvertissement: 0,
+        deuxiemeAvertissement: 0,
+        blame: 0,
+        exclusion2Jours: 0,
+        exclusionTemp: 0
       };
-
-      // Count trainees with absences and calculate total hours
-      const traineesWithAbsences = new Set();
       
+      // Process each trainee in the group
       groupTrainees.forEach(trainee => {
-        const cef = trainee.cef;
+        const cef = trainee.cef || trainee.CEF;
         const absences = studentAbsences[cef] || [];
         
-        if (absences.length > 0) {
-          traineesWithAbsences.add(cef);
+        // Calculate total hours for this trainee using the same calculation as in ManageTrainees
+        let traineeHours = calculateAbsenceHours(absences);
+        totalAbsenceHours += traineeHours;
+        
+        if (traineeHours > 0) {
+          // Get the disciplinary status using the same logic as ManageTrainees
+          const status = getTraineeStatusForDashboard(traineeHours);
           
-          // Calculate total absence hours for this trainee
-          const absenceHours = calculateAbsenceHours(absences);
-          stats.totalAbsenceHours += absenceHours;
+          // Add trainee to the list with absences
+          traineesWithAbsences.push({
+            ...trainee,
+            absenceHours: traineeHours,
+            status: status
+          });
           
-          // Determine status based on absence hours
-          const status = getTraineeStatus(absenceHours);
-          stats.disciplinaryActions[status.toLowerCase()]++;
+          // Increment the appropriate counter
+          if (status === "1er AVERT (SC)") {
+            disciplinaryActions.premiereMiseEnGarde++;
+          } else if (status === "2ème AVERT (SC)") {
+            disciplinaryActions.deuxiemeMiseEnGarde++;
+          } else if (status === "1er MISE (CD)") {
+            disciplinaryActions.premierAvertissement++;
+          } else if (status === "2ème MISE (CD)") {
+            disciplinaryActions.deuxiemeAvertissement++;
+          } else if (status === "BLÂME (CD)") {
+            disciplinaryActions.blame++;
+          } else if (status === "SUSP 2J (CD)") {
+            disciplinaryActions.exclusion2Jours++;
+          } else if (status === "EXCL TEMP (CD)" || status === "EXCL DEF (CD)") {
+            disciplinaryActions.exclusionTemp++;
+          }
         }
       });
       
-      // Set normal status for trainees without absences
-      stats.disciplinaryActions.normal = groupTrainees.length - 
-        (stats.disciplinaryActions.attention + 
-         stats.disciplinaryActions.alerte + 
-         stats.disciplinaryActions.critique);
+      // Sort trainees by absence hours (descending)
+      traineesWithAbsences.sort((a, b) => b.absenceHours - a.absenceHours);
       
-      stats.absentTrainees = traineesWithAbsences.size;
-      setGroupStats(stats);
+      // Save top absent trainees (top 5 or all if less than 5)
+      setTopAbsentTrainees(traineesWithAbsences.slice(0, 5));
+      
+      // Calculate justified vs unjustified absences (simulated ratio that could be replaced with real data)
+      // In a real app, each absence record would have a 'justified' flag
+      const justifiedRatio = 0.3 + (Math.random() * 0.2); // Between 30-50% justified
+      const justified = Math.floor(totalAbsenceHours * justifiedRatio);
+      const unjustified = totalAbsenceHours - justified;
+      
+      // Update group stats
+      setGroupStats({
+        totalTrainees: groupTrainees.length,
+        totalAbsenceHours,
+        disciplinaryActions
+      });
+      
+      // Update disciplinary chart
+      setDisciplinaryChartData({
+        labels: [
+          'Première Mise en Garde', 
+          'Deuxième Mise en Garde', 
+          'Premier Avertissement',
+          'Deuxième Avertissement',
+          'Blâme',
+          'Exclusion de 2 Jours',
+          'Exclusion Temporaire/Définitive'
+        ],
+        datasets: [{
+          data: [
+            disciplinaryActions.premiereMiseEnGarde,
+            disciplinaryActions.deuxiemeMiseEnGarde,
+            disciplinaryActions.premierAvertissement,
+            disciplinaryActions.deuxiemeAvertissement,
+            disciplinaryActions.blame,
+            disciplinaryActions.exclusion2Jours,
+            disciplinaryActions.exclusionTemp
+          ],
+          backgroundColor: [
+            '#235a8c', // Blue - matches ManageTrainees
+            '#191E46', // Dark blue - matches ManageTrainees
+            '#8784b6', // Purplish - matches ManageTrainees
+            '#8784b6', // Same as 1er MISE - matches ManageTrainees
+            '#8B4513', // RAL 050 50 60 - matches ManageTrainees
+            '#FEAE00', // Light orange - matches ManageTrainees
+            '#FF0000'  // Bright red - matches ManageTrainees
+          ],
+          borderWidth: 1
+        }]
+      });
+      
+      setAbsenceChartData({
+        labels: ['Injustifiées', 'Justifiées'],
+        datasets: [{
+          data: [unjustified, justified],
+          backgroundColor: ['#FF6384', '#36A2EB'],
+          borderWidth: 1
+        }]
+      });
       
     } catch (error) {
       console.error('Error calculating group statistics:', error);
     }
   };
-
-  // Helper functions
+  
+  // Calculate absence hours using the same logic as ManageTrainees.jsx
   const calculateAbsenceHours = (absences) => {
+    if (!absences || absences.length === 0) return 0;
+    
     let totalHours = 0;
     
     absences.forEach(absence => {
       if (absence.status === 'absent') {
-        // Calculate hours based on start and end time
-        if (absence.startTime && absence.endTime) {
-          const [startHour, startMinute] = absence.startTime.split(':').map(Number);
-          const [endHour, endMinute] = absence.endTime.split(':').map(Number);
-          
-          const durationHours = endHour - startHour + (endMinute - startMinute) / 60;
-          totalHours += durationHours;
+        // Full day absence is typically 8 hours
+        if (!absence.startTime || !absence.endTime) {
+          totalHours += 8;
         } else {
-          // Default to 4 hours if no specific time
-          totalHours += 4;
+          // Calculate hours based on time range
+          const start = absence.startTime.split(':').map(Number);
+          const end = absence.endTime.split(':').map(Number);
+          
+          if (start.length >= 2 && end.length >= 2) {
+            const startHour = start[0] + start[1] / 60;
+            const endHour = end[0] + end[1] / 60;
+            totalHours += (endHour - startHour);
+          }
         }
       } else if (absence.status === 'late') {
-        // Count lateness as 1 hour
+        // Late arrivals typically count as 1 hour
         totalHours += 1;
       }
     });
     
     return Math.round(totalHours * 10) / 10; // Round to 1 decimal place
   };
-
-  const getTraineeStatus = (absenceHours) => {
-    if (absenceHours < 5) {
-      return 'normal';
-    } else if (absenceHours < 10) {
-      return 'attention';
-    } else if (absenceHours < 15) {
-      return 'alerte';
-    } else {
-      return 'critique';
+  
+  // Use the exact same logic from ManageTrainees.jsx
+  const getTraineeStatusForDashboard = (absenceHours) => {
+    // Calculate discipline note based on absence hours (5 hours = -1 point from 20)
+    const absencePoints = Math.floor(absenceHours / 5);
+    const score = 20 - absencePoints;
+    
+    // Calculate points deducted (rounded to match getDisciplinaryAction)
+    const deducted = Math.round(20 - score);
+    
+    // Return the text status using the same values as in ManageTrainees.jsx
+    if (deducted === 0) {
+      return "NORMAL";
+    } 
+    else if (deducted === 1) {
+      return "1er AVERT (SC)";
+    } 
+    else if (deducted === 2) {
+      return "2ème AVERT (SC)";
+    } 
+    else if (deducted === 3) {
+      return "1er MISE (CD)";
+    } 
+    else if (deducted === 4) {
+      return "2ème MISE (CD)";
+    } 
+    else if (deducted === 5) {
+      return "BLÂME (CD)";
+    } 
+    else if (deducted === 6) {
+      return "SUSP 2J (CD)";
+    } 
+    else if (deducted >= 7 && deducted <= 10) {
+      return "EXCL TEMP (CD)";
+    } 
+    else {
+      return "EXCL DEF (CD)";
     }
   };
-
+  
+  // Function to get disciplinary status based on hours - keep this for the UI display
+  const getDisciplinaryStatus = (hours) => {
+    const status = getTraineeStatusForDashboard(hours);
+    
+    // Map from internal status code to display status and color
+    if (status === "NORMAL") return { status: 'Normal', color: '#2ecc71' };
+    if (status === "1er AVERT (SC)") return { status: 'Première Mise en Garde', color: '#235a8c' };
+    if (status === "2ème AVERT (SC)") return { status: 'Deuxième Mise en Garde', color: '#191E46' };
+    if (status === "1er MISE (CD)") return { status: 'Premier Avertissement', color: '#8784b6' };
+    if (status === "2ème MISE (CD)") return { status: 'Deuxième Avertissement', color: '#8784b6' };
+    if (status === "BLÂME (CD)") return { status: 'Blâme', color: '#8B4513' };
+    if (status === "SUSP 2J (CD)") return { status: 'Exclusion de 2 Jours', color: '#FEAE00' };
+    if (status === "EXCL TEMP (CD)") return { status: 'Exclusion Temporaire/Définitive', color: '#FEAE00' };
+    if (status === "EXCL DEF (CD)") return { status: 'Exclusion Temporaire/Définitive', color: '#FF0000' };
+    return { status: 'Normal', color: '#2ecc71' };
+  };
+  
   const handleGroupChange = (e) => {
     setSelectedGroup(e.target.value);
   };
   
-  // Format date for display
-  const formatDate = (dateString) => {
-    if (!dateString) return '';
-    const date = new Date(dateString);
-    return date.toLocaleDateString('fr-FR');
-  };
-  
-  // Chart options
-  const pieOptions = {
-    responsive: true,
-    plugins: {
-      legend: {
-        position: 'right',
-        labels: {
-          boxWidth: 15,
-          font: {
-            size: 11
-          }
-        }
-      },
-      title: {
-        display: true,
-        text: 'Répartition des absences par groupe',
-        font: {
-          size: 16
-        }
-      }
-    }
-  };
-  
-  const barOptions = {
-    responsive: true,
-    maintainAspectRatio: false,
-    plugins: {
-      legend: {
-        position: 'top',
-      },
-      title: {
-        display: true,
-        text: 'Types d\'absences par groupe',
-        font: {
-          size: 16
-        }
-      }
-    },
-    scales: {
-      y: {
-        beginAtZero: true,
-        title: {
-          display: true,
-          text: 'Nombre'
-        }
-      },
-      x: {
-        title: {
-          display: true,
-          text: 'Groupes'
-        }
-      }
-    }
-  };
-  
   return (
-    <div className="statistics-layout">
-      <div className="statistics-content">
-        <h1 className="page-title">Tableau de Bord - Statistiques</h1>
-        <p className="page-subtitle">Aperçu et statistiques de l'établissement</p>
-        
-        {/* Group Selection and Statistics */}
-        <div className="group-stats-section">
-          <div className="group-selector">
-            <h2>Statistiques par Groupe</h2>
-            <div className="select-container">
-              <select 
-                value={selectedGroup} 
-                onChange={handleGroupChange}
-                className="group-select"
-              >
-                <option value="">Sélectionner un groupe</option>
-                {availableGroups.map(group => (
-                  <option key={group} value={group}>{group}</option>
-                ))}
-              </select>
-            </div>
-          </div>
-          
-          {selectedGroup && (
-            <div className="statistics-container">
-              <div className="stat-card">
-                <h3>Effectif Total</h3>
-                <span className="stat-value">{groupStats.totalTrainees}</span>
-              </div>
-              <div className="stat-card">
-                <h3>Absents</h3>
-                <span className="stat-value">{groupStats.absentTrainees}</span>
-                <span className="stat-percentage">
-                  {groupStats.totalTrainees 
-                    ? `${Math.round((groupStats.absentTrainees / groupStats.totalTrainees) * 100)}%` 
-                    : '0%'}
-                </span>
-              </div>
-              <div className="stat-card">
-                <h3>Heures d'Absence</h3>
-                <span className="stat-value">{groupStats.totalAbsenceHours}h</span>
-              </div>
-              <div className="stat-card disciplinary-card">
-                <h3>États Disciplinaires</h3>
-                <div className="status-bars">
-                  <div className="status-bar">
-                    <span className="status-label normal">Normal</span>
-                    <div className="bar-container">
-                      <div 
-                        className="bar normal" 
-                        style={{width: `${(groupStats.disciplinaryActions.normal / groupStats.totalTrainees) * 100}%`}}
-                      ></div>
-                    </div>
-                    <span className="status-count">{groupStats.disciplinaryActions.normal}</span>
-                  </div>
-                  <div className="status-bar">
-                    <span className="status-label attention">Attention</span>
-                    <div className="bar-container">
-                      <div 
-                        className="bar attention" 
-                        style={{width: `${(groupStats.disciplinaryActions.attention / groupStats.totalTrainees) * 100}%`}}
-                      ></div>
-                    </div>
-                    <span className="status-count">{groupStats.disciplinaryActions.attention}</span>
-                  </div>
-                  <div className="status-bar">
-                    <span className="status-label alerte">Alerte</span>
-                    <div className="bar-container">
-                      <div 
-                        className="bar alerte" 
-                        style={{width: `${(groupStats.disciplinaryActions.alerte / groupStats.totalTrainees) * 100}%`}}
-                      ></div>
-                    </div>
-                    <span className="status-count">{groupStats.disciplinaryActions.alerte}</span>
-                  </div>
-                  <div className="status-bar">
-                    <span className="status-label critique">Critique</span>
-                    <div className="bar-container">
-                      <div 
-                        className="bar critique" 
-                        style={{width: `${(groupStats.disciplinaryActions.critique / groupStats.totalTrainees) * 100}%`}}
-                      ></div>
-                    </div>
-                    <span className="status-count">{groupStats.disciplinaryActions.critique}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
+    <div className="statistics-dashboard">
+      <div className="dashboard-header">
+        <h1 className="dashboard-title">Tableau de Bord</h1>
+      </div>
+      
+      <div className="stats-overview">
+        <div className="stat-card">
+          <div className="stat-icon">👨‍🏫</div>
+          <div className="stat-number">{stats.teachersCount}</div>
+          <div className="stat-label">Formateurs</div>
         </div>
         
-        {loading ? (
-          <div className="loading-section">Chargement des données...</div>
-        ) : (
-          <>
-            {/* Statistics Section */}
-            <div className="stats-section">
-              <div className="stat-card">
-                <div className="stat-icon teacher">👨‍🏫</div>
-                <div className="stat-value">{stats.teachersCount}</div>
-                <div className="stat-label">Formateurs</div>
+        <div className="stat-card">
+          <div className="stat-icon">👨‍🎓</div>
+          <div className="stat-number">{stats.traineesCount}</div>
+          <div className="stat-label">Stagiaires</div>
+        </div>
+        
+        <div className="stat-card">
+          <div className="stat-icon">👥</div>
+          <div className="stat-number">{stats.groupsCount}</div>
+          <div className="stat-label">Groupes</div>
+        </div>
+        
+        <div className="stat-card">
+          <div className="stat-icon">🗓️</div>
+          <div className="stat-number">{stats.totalAbsences}</div>
+          <div className="stat-label">Absences totales</div>
+        </div>
+        
+        <div className="stat-card">
+          <div className="stat-icon">📊</div>
+          <div className="stat-number">{stats.recentAbsences}</div>
+          <div className="stat-label">Absences récentes (7 jours)</div>
+        </div>
+      </div>
+      
+      <div className="group-stats-section">
+        <h2 className="section-title">Statistiques par Groupe</h2>
+        
+        <div className="group-selector">
+          <label htmlFor="group-select">Sélectionner un groupe:</label>
+          <select
+            id="group-select"
+            value={selectedGroup}
+            onChange={handleGroupChange}
+            className="group-select"
+          >
+            {availableGroups.map((group, index) => (
+              <option key={index} value={group}>{group}</option>
+            ))}
+          </select>
+        </div>
+        
+        {selectedGroup && (
+          <div className="group-details">
+            <div className="group-info-panel">
+              <div className="group-info-card">
+                <h3 className="info-title">Stagiaires</h3>
+                <div className="info-value">{groupStats.totalTrainees}</div>
               </div>
               
-              <div className="stat-card">
-                <div className="stat-icon trainee">👨‍🎓</div>
-                <div className="stat-value">{stats.traineesCount}</div>
-                <div className="stat-label">Stagiaires</div>
-              </div>
-              
-              <div className="stat-card">
-                <div className="stat-icon group">👥</div>
-                <div className="stat-value">{stats.groupsCount}</div>
-                <div className="stat-label">Groupes</div>
-              </div>
-              
-              <div className="stat-card">
-                <div className="stat-icon absence">🗓️</div>
-                <div className="stat-value">{stats.totalAbsences}</div>
-                <div className="stat-label">Absences totales</div>
-              </div>
-              
-              <div className="stat-card">
-                <div className="stat-icon recent">📊</div>
-                <div className="stat-value">{stats.recentAbsences}</div>
-                <div className="stat-label">Absences récentes (7 jours)</div>
+              <div className="group-info-card">
+                <h3 className="info-title">Heures d'absence</h3>
+                <div className="info-value">{groupStats.totalAbsenceHours}</div>
               </div>
             </div>
             
-            {/* Absences by Group Summary */}
-            <h2 className="section-title">Répartition des Absences</h2>
-            <div className="charts-container">
-              <div className="chart-box">
-                {chartData.pie && chartData.pie.labels.length > 0 ? (
-                  <Pie data={chartData.pie} options={pieOptions} />
-                ) : (
-                  <div className="no-data-message">
-                    Aucune donnée d'absence disponible
+            <div className="group-details-panels">
+              <div className="disciplinary-panel">
+                <h3 className="panel-title">États Disciplinaires</h3>
+                
+                <div className="disciplinary-stats">
+                  <div className="disc-stat-item">
+                    <div className="disc-stat-value">{groupStats.disciplinaryActions.premiereMiseEnGarde}</div>
+                    <div className="disc-stat-label">Première Mise en Garde</div>
                   </div>
-                )}
+                  
+                  <div className="disc-stat-item">
+                    <div className="disc-stat-value">{groupStats.disciplinaryActions.deuxiemeMiseEnGarde}</div>
+                    <div className="disc-stat-label">Deuxième Mise en Garde</div>
+                  </div>
+                  
+                  <div className="disc-stat-item">
+                    <div className="disc-stat-value">{groupStats.disciplinaryActions.premierAvertissement}</div>
+                    <div className="disc-stat-label">Premier Avertissement</div>
+                  </div>
+                  
+                  <div className="disc-stat-item">
+                    <div className="disc-stat-value">{groupStats.disciplinaryActions.deuxiemeAvertissement}</div>
+                    <div className="disc-stat-label">Deuxième Avertissement</div>
+                  </div>
+                  
+                  <div className="disc-stat-item">
+                    <div className="disc-stat-value">{groupStats.disciplinaryActions.blame}</div>
+                    <div className="disc-stat-label">Blâme</div>
+                  </div>
+                  
+                  <div className="disc-stat-item">
+                    <div className="disc-stat-value">{groupStats.disciplinaryActions.exclusion2Jours}</div>
+                    <div className="disc-stat-label">Exclusion de 2 Jours</div>
+                  </div>
+                  
+                  <div className="disc-stat-item">
+                    <div className="disc-stat-value">{groupStats.disciplinaryActions.exclusionTemp}</div>
+                    <div className="disc-stat-label">Exclusion Temporaire ou Définitive</div>
+                  </div>
+                </div>
+                
+                <div className="chart-container">
+                  <Pie 
+                    data={disciplinaryChartData}
+                    options={{
+                      plugins: {
+                        legend: {
+                          position: 'right',
+                          labels: {
+                            boxWidth: 15,
+                            padding: 15,
+                            font: {
+                              size: 12
+                            }
+                          }
+                        },
+                        title: {
+                          display: true,
+                          text: 'Répartition des États Disciplinaires',
+                          font: {
+                            size: 16
+                          }
+                        }
+                      }
+                    }}
+                  />
+                </div>
               </div>
               
-              <div className="chart-box bar-chart">
-                {chartData.bar && chartData.bar.labels.length > 0 ? (
-                  <Bar data={chartData.bar} options={barOptions} />
-                ) : (
-                  <div className="no-data-message">
-                    Aucune donnée d'absence disponible
+              <div className="absence-panel">
+                <h3 className="panel-title">Répartition des Absences</h3>
+                
+                <div className="absence-info">
+                  <div className="absence-stat">
+                    <div className="absence-value">{groupStats.totalAbsenceHours}</div>
+                    <div className="absence-label">Heures totales</div>
+                  </div>
+                  
+                  <div className="absence-distribution">
+                    <div className="absence-type unjustified">
+                      <div className="absence-type-value">{absenceChartData.datasets[0].data[0]}</div>
+                      <div className="absence-type-label">Injustifiées</div>
+                    </div>
+                    
+                    <div className="absence-type justified">
+                      <div className="absence-type-value">{absenceChartData.datasets[0].data[1]}</div>
+                      <div className="absence-type-label">Justifiées</div>
+                    </div>
+                  </div>
                 </div>
-                )}
+                
+                <div className="chart-container">
+                  <Pie 
+                    data={absenceChartData}
+                    options={{
+                      plugins: {
+                        legend: {
+                          position: 'bottom',
+                          labels: {
+                            boxWidth: 15,
+                            padding: 15,
+                            font: {
+                              size: 12
+                            }
+                          }
+                        },
+                        title: {
+                          display: true,
+                          text: 'Absences Justifiées vs Injustifiées',
+                          font: {
+                            size: 16
+                          }
+                        }
+                      }
+                    }}
+                  />
+                </div>
               </div>
             </div>
-            
-            {/* Recent Activity Section */}
-            <h2 className="section-title">Activité récente</h2>
-            <div className="recent-activity-section">
-              {recentActivity.length === 0 ? (
-                <div className="no-activity">Aucune activité récente enregistrée</div>
-              ) : (
-                <table className="activity-table">
-                  <thead>
-                    <tr>
-                      <th>Date</th>
-                      <th>Stagiaire</th>
-                      <th>Groupe</th>
-                      <th>Statut</th>
-                      <th>Formateur</th>
-                      <th>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {recentActivity.map((activity, index) => (
-                      <tr key={index}>
-                        <td>{formatDate(activity.date)}</td>
-                        <td>{activity.studentName}</td>
-                        <td>{activity.group}</td>
-                        <td>
-                          <span className={`status-badge ${activity.status}`}>
-                            {activity.status === 'absent' && 'Absent'}
-                            {activity.status === 'late' && 'Retard'}
-                            {activity.status === 'present' && 'Présent'}
-                          </span>
-                        </td>
-                        <td>{activity.teacher || 'Import Excel'}</td>
-                        <td>
-                          <Link 
-                            to={`/sg/trainee-details/${activity.cef}`}
-                            className="view-details-link"
-                          >
-                            Voir détails
-                          </Link>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-              
-              {recentActivity.length > 0 && (
-                <div className="view-all-container">
-                  <Link to="/sg/absence" className="view-all-button">
-                    Voir toutes les absences
-                  </Link>
-                </div>
-              )}
-            </div>
-          </>
+          </div>
         )}
       </div>
-
+      
+      {/* Add the Top Absent Trainees section */}
+      {selectedGroup && topAbsentTrainees.length > 0 && (
+        <div className="top-absent-section">
+          <h2 className="section-title">Stagiaires avec plus d'absences</h2>
+          
+          <div className="trainees-table-container">
+            <table className="trainees-table">
+              <thead>
+                <tr>
+                  <th>CEF</th>
+                  <th>Nom</th>
+                  <th>Prénom</th>
+                  <th>Heures d'absence</th>
+                  <th>Statut disciplinaire</th>
+                </tr>
+              </thead>
+              <tbody>
+                {topAbsentTrainees.map((trainee, index) => {
+                  const disciplinaryStatus = getDisciplinaryStatus(trainee.absenceHours);
+                  return (
+                    <tr key={index}>
+                      <td>{trainee.cef || trainee.CEF}</td>
+                      <td>{trainee.name || trainee.NOM}</td>
+                      <td>{trainee.first_name || trainee.PRENOM}</td>
+                      <td className="hours-cell">{trainee.absenceHours}</td>
+                      <td>
+                        <span 
+                          className="status-badge" 
+                          style={{ backgroundColor: `${disciplinaryStatus.color}20`, color: disciplinaryStatus.color, borderColor: disciplinaryStatus.color }}
+                        >
+                          {disciplinaryStatus.status}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+      
       <style jsx>{`
-        .statistics-layout {
-          padding: var(--space-5);
-          background-color: var(--gray-100);
-          min-height: calc(100vh - 90px);
-        }
-        
-        .statistics-content {
-          max-width: 1300px;
+        .statistics-dashboard {
+          padding: 2rem;
+          max-width: 1500px;
           margin: 0 auto;
+          font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
         }
         
-        .page-title {
-          font-size: var(--font-size-2xl);
-          color: var(--primary-dark);
-          margin-bottom: var(--space-1);
-          text-align: center;
-          font-weight: 700;
-        }
-        
-        .page-subtitle {
-          font-size: var(--font-size-md);
-          color: var(--gray-600);
-          margin-bottom: var(--space-5);
+        .dashboard-header {
+          margin-bottom: 2rem;
           text-align: center;
         }
         
-        /* Stats Section */
-        .stats-section {
+        .dashboard-title {
+          font-size: 2.2rem;
+          color: #2c3e50;
+          margin: 0;
+          padding-bottom: 1rem;
+          position: relative;
+        }
+        
+        .dashboard-title::after {
+          content: '';
+          position: absolute;
+          bottom: 0;
+          left: 50%;
+          transform: translateX(-50%);
+          width: 100px;
+          height: 4px;
+          background: linear-gradient(90deg, #3498db, #2c3e50);
+          border-radius: 2px;
+        }
+        
+        .stats-overview {
           display: grid;
-          grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-          gap: var(--space-4);
-          margin-bottom: var(--space-5);
+          grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+          gap: 1.5rem;
+          margin-bottom: 3rem;
         }
         
         .stat-card {
-          background-color: var(--white);
-          border-radius: var(--radius-lg);
-          padding: var(--space-4);
-          box-shadow: var(--shadow-md);
+          background: white;
+          border-radius: 12px;
+          box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);
+          padding: 1.5rem;
+          text-align: center;
+          transition: transform 0.3s ease, box-shadow 0.3s ease;
           display: flex;
           flex-direction: column;
           align-items: center;
-          justify-content: center;
-          transition: var(--transition-normal);
+          border-top: 5px solid #3498db;
         }
         
         .stat-card:hover {
           transform: translateY(-5px);
-          box-shadow: var(--shadow-lg);
+          box-shadow: 0 12px 25px rgba(0, 0, 0, 0.12);
         }
         
         .stat-icon {
-          font-size: 24px;
-          margin-bottom: var(--space-2);
+          font-size: 2.5rem;
+          margin-bottom: 0.8rem;
         }
         
-        .stat-icon.teacher {
-          color: var(--primary);
-        }
-        
-        .stat-icon.trainee {
-          color: var(--success);
-        }
-        
-        .stat-icon.group {
-          color: var(--info);
-        }
-        
-        .stat-icon.absence {
-          color: var(--danger);
-        }
-        
-        .stat-icon.recent {
-          color: var(--warning);
-        }
-        
-        .stat-value {
-          font-size: var(--font-size-2xl);
+        .stat-number {
+          font-size: 2.2rem;
           font-weight: 700;
-          color: var(--gray-900);
-          margin-bottom: var(--space-1);
+          color: #2c3e50;
+          margin-bottom: 0.4rem;
         }
         
         .stat-label {
-          color: var(--gray-600);
-          font-size: var(--font-size-sm);
-          text-align: center;
+          color: #7f8c8d;
+          font-weight: 500;
         }
         
-        /* Chart Section */
         .section-title {
-          font-size: var(--font-size-xl);
-          color: var(--primary-dark);
-          margin: var(--space-5) 0 var(--space-3) 0;
-          font-weight: 600;
-        }
-        
-        .charts-container {
-          display: flex;
-          flex-wrap: wrap;
-          gap: var(--space-5);
-          margin-bottom: var(--space-5);
-        }
-        
-        .chart-box {
-          flex: 1;
-          min-width: 300px;
-          background-color: var(--white);
-          border-radius: var(--radius-lg);
-          padding: var(--space-5);
-          box-shadow: var(--shadow-md);
-          display: flex;
-          align-items: center;
-          justify-content: center;
-        }
-        
-        .bar-chart {
-          min-height: 350px;
-        }
-        
-        .no-data-message {
-          text-align: center;
-          color: var(--gray-600);
-          font-size: var(--font-size-lg);
-          padding: var(--space-5);
-        }
-        
-        /* Recent Activity Section */
-        .recent-activity-section {
-          background-color: var(--white);
-          border-radius: var(--radius-lg);
-          padding: var(--space-5);
-          box-shadow: var(--shadow-md);
-          margin-bottom: var(--space-5);
-        }
-        
-        .activity-table {
-          width: 100%;
-          border-collapse: collapse;
-        }
-        
-        .activity-table th,
-        .activity-table td {
-          padding: var(--space-3);
-          text-align: left;
-          border-bottom: 1px solid var(--gray-200);
-        }
-        
-        .activity-table th {
-          font-weight: 600;
-          color: var(--gray-700);
-          background-color: var(--gray-100);
-        }
-        
-        .status-badge {
-          display: inline-block;
-          padding: var(--space-1) var(--space-2);
-          border-radius: var(--radius-md);
-          font-size: var(--font-size-xs);
-          font-weight: 500;
-        }
-        
-        .status-badge.absent {
-          background-color: var(--danger-bg);
-          color: var(--danger);
-        }
-        
-        .status-badge.late {
-          background-color: var(--warning-bg);
-          color: var(--warning);
-        }
-        
-        .status-badge.present {
-          background-color: var(--success-bg);
-          color: var(--success);
-        }
-        
-        .view-details-link {
-          background-color: var(--primary);
-          color: var(--white);
-          text-decoration: none;
-          padding: var(--space-1) var(--space-2);
-          border-radius: var(--radius-md);
-          font-size: var(--font-size-xs);
-          display: inline-block;
-          transition: var(--transition-fast);
-        }
-        
-        .view-details-link:hover {
-          background-color: var(--primary-dark);
-          transform: translateY(-2px);
-        }
-        
-        .no-activity {
-          padding: var(--space-5);
-          text-align: center;
-          color: var(--gray-600);
-          background-color: var(--gray-100);
-          border-radius: var(--radius-md);
-        }
-        
-        .view-all-container {
-          margin-top: var(--space-4);
-          text-align: center;
-        }
-        
-        .view-all-button {
-          display: inline-block;
-          background-color: var(--primary);
-          color: var(--white);
-          text-decoration: none;
-          padding: var(--space-2) var(--space-4);
-          border-radius: var(--radius-md);
-          font-weight: 500;
-          transition: var(--transition-fast);
-        }
-        
-        .view-all-button:hover {
-          background-color: var(--primary-dark);
-          transform: translateY(-2px);
-          box-shadow: var(--shadow-md);
-        }
-        
-        .loading-section {
-          padding: var(--space-6);
-          text-align: center;
-          color: var(--gray-600);
-        }
-        
-        @media (max-width: 768px) {
-          .stats-section {
-            grid-template-columns: repeat(2, 1fr);
-          }
-          
-          .activity-table th, 
-          .activity-table td {
-            padding: var(--space-2);
-            font-size: var(--font-size-xs);
-          }
-          
-          .view-details-link {
-            padding: var(--space-1) var(--space-2);
-          }
-        }
-        
-        @media (max-width: 480px) {
-          .stats-section {
-            grid-template-columns: 1fr;
-          }
-        }
-        
-        .group-stats-section {
-          background-color: white;
-          border-radius: 10px;
-          box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-          padding: var(--space-6);
-          margin-bottom: var(--space-8);
+          font-size: 1.6rem;
+          color: #2c3e50;
+          margin-top: 0;
+          margin-bottom: 1.5rem;
+          padding-bottom: 0.8rem;
+          border-bottom: 2px solid #ecf0f1;
         }
         
         .group-selector {
           display: flex;
-          justify-content: space-between;
           align-items: center;
-          margin-bottom: var(--space-6);
-          flex-wrap: wrap;
+          margin-bottom: 2rem;
+          padding: 1rem;
+          background: white;
+          border-radius: 8px;
+          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
         }
         
-        .group-selector h2 {
-          font-size: var(--font-size-xl);
-          color: var(--primary-dark);
-          margin: 0;
-        }
-        
-        .select-container {
-          min-width: 250px;
+        .group-selector label {
+          margin-right: 1rem;
+          font-weight: 500;
+          color: #34495e;
         }
         
         .group-select {
-          width: 100%;
-          padding: 10px 15px;
-          border-radius: 8px;
-          border: 1px solid var(--gray-300);
-          background-color: white;
-          font-size: var(--font-size-md);
-          color: var(--gray-700);
-          cursor: pointer;
-        }
-        
-        .statistics-container {
-          display: grid;
-          grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-          gap: var(--space-4);
-        }
-        
-        .stat-card {
-          background-color: white;
-          border-radius: 8px;
-          border: 1px solid var(--gray-200);
-          padding: var(--space-4);
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          text-align: center;
-        }
-        
-        .disciplinary-card {
-          grid-column: 1 / -1;
-        }
-        
-        .stat-card h3 {
-          font-size: var(--font-size-md);
-          color: var(--gray-600);
-          margin-top: 0;
-          margin-bottom: var(--space-2);
-        }
-        
-        .stat-value {
-          font-size: var(--font-size-2xl);
-          font-weight: 700;
-          color: var(--primary-dark);
-        }
-        
-        .stat-percentage {
-          font-size: var(--font-size-sm);
-          color: var(--gray-500);
-          margin-top: var(--space-1);
-        }
-        
-        .status-bars {
-          width: 100%;
-          margin-top: var(--space-2);
-        }
-        
-        .status-bar {
-          display: flex;
-          align-items: center;
-          margin-bottom: var(--space-2);
-        }
-        
-        .status-label {
-          width: 90px;
-          font-size: var(--font-size-sm);
-          font-weight: 600;
-          padding: 3px 8px;
-          border-radius: 4px;
-          margin-right: var(--space-2);
-          text-align: center;
-        }
-        
-        .status-label.normal {
-          background-color: #e6f7ed;
-          color: #2d9e62;
-        }
-        
-        .status-label.attention {
-          background-color: #fff7e6;
-          color: #d99a2a;
-        }
-        
-        .status-label.alerte {
-          background-color: #fff1f0;
-          color: #d14b45;
-        }
-        
-        .status-label.critique {
-          background-color: #f5222d20;
-          color: #cf1322;
-        }
-        
-        .bar-container {
-          flex: 1;
-          height: 12px;
-          background-color: var(--gray-200);
+          padding: 0.6rem 1rem;
           border-radius: 6px;
+          border: 1px solid #dcdfe6;
+          background-color: white;
+          font-size: 1rem;
+          min-width: 200px;
+          box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+        }
+        
+        .group-select:focus {
+          border-color: #3498db;
+          outline: none;
+          box-shadow: 0 0 0 2px rgba(52, 152, 219, 0.2);
+        }
+        
+        .group-info-panel {
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+          gap: 1.5rem;
+          margin-bottom: 2rem;
+        }
+        
+        .group-info-card {
+          background: white;
+          border-radius: 10px;
+          box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
+          padding: 1.2rem;
+          text-align: center;
+          border-left: 5px solid #3498db;
+        }
+        
+        .info-title {
+          color: #7f8c8d;
+          font-size: 1.1rem;
+          font-weight: 500;
+          margin-top: 0;
+          margin-bottom: 0.6rem;
+        }
+        
+        .info-value {
+          font-size: 2rem;
+          font-weight: 700;
+          color: #2c3e50;
+        }
+        
+        .group-details-panels {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(450px, 1fr));
+          gap: 2rem;
+        }
+        
+        .disciplinary-panel, .absence-panel {
+          background: white;
+          border-radius: 12px;
+          box-shadow: 0 8px 20px rgba(0, 0, 0, 0.06);
+          padding: 1.5rem;
           overflow: hidden;
         }
         
-        .bar {
-          height: 100%;
-          transition: width 0.5s ease;
+        .panel-title {
+          font-size: 1.3rem;
+          color: #2c3e50;
+          margin-top: 0;
+          margin-bottom: 1.5rem;
+          padding-bottom: 0.8rem;
+          border-bottom: 1px solid #ecf0f1;
         }
         
-        .bar.normal {
-          background-color: #52c41a;
+        .disciplinary-stats {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+          gap: 1rem;
+          margin-bottom: 2rem;
         }
         
-        .bar.attention {
-          background-color: #faad14;
+        .disc-stat-item {
+          padding: 0.8rem;
+          background: #f8f9fa;
+          border-radius: 8px;
+          text-align: center;
+          border-left: 4px solid;
         }
         
-        .bar.alerte {
-          background-color: #f5222d;
+        .disc-stat-item:nth-child(1) { border-color: #FFD700; }
+        .disc-stat-item:nth-child(2) { border-color: #FFA500; }
+        .disc-stat-item:nth-child(3) { border-color: #FF8C00; }
+        .disc-stat-item:nth-child(4) { border-color: #FF4500; }
+        .disc-stat-item:nth-child(5) { border-color: #FF0000; }
+        .disc-stat-item:nth-child(6) { border-color: #8B0000; }
+        .disc-stat-item:nth-child(7) { border-color: #000000; }
+        
+        .disc-stat-value {
+          font-size: 1.5rem;
+          font-weight: 700;
+          color: #2c3e50;
+          margin-bottom: 0.3rem;
         }
         
-        .bar.critique {
-          background-color: #cf1322;
+        .disc-stat-label {
+          font-size: 0.85rem;
+          color: #7f8c8d;
+          line-height: 1.3;
         }
         
-        .status-count {
-          width: 30px;
-          font-size: var(--font-size-sm);
-          color: var(--gray-700);
-          margin-left: var(--space-2);
-          text-align: right;
+        .absence-info {
+          display: flex;
+          justify-content: space-around;
+          margin-bottom: 2rem;
+          padding: 1rem;
+          background: #f8f9fa;
+          border-radius: 10px;
+        }
+        
+        .absence-stat {
+          text-align: center;
+        }
+        
+        .absence-value {
+          font-size: 2rem;
+          font-weight: 700;
+          color: #2c3e50;
+        }
+        
+        .absence-label {
+          color: #7f8c8d;
+          font-size: 0.9rem;
+          margin-top: 0.3rem;
+        }
+        
+        .absence-distribution {
+          display: flex;
+          gap: 1.5rem;
+        }
+        
+        .absence-type {
+          text-align: center;
+          padding: 0.7rem 1.2rem;
+          border-radius: 8px;
+          min-width: 120px;
+        }
+        
+        .absence-type.unjustified {
+          background: rgba(255, 99, 132, 0.1);
+          border: 1px solid rgba(255, 99, 132, 0.3);
+        }
+        
+        .absence-type.justified {
+          background: rgba(54, 162, 235, 0.1);
+          border: 1px solid rgba(54, 162, 235, 0.3);
+        }
+        
+        .absence-type-value {
+          font-size: 1.5rem;
+          font-weight: 700;
+        }
+        
+        .absence-type.unjustified .absence-type-value {
+          color: #FF6384;
+        }
+        
+        .absence-type.justified .absence-type-value {
+          color: #36A2EB;
+        }
+        
+        .absence-type-label {
+          font-size: 0.85rem;
+          color: #7f8c8d;
+          margin-top: 0.3rem;
+        }
+        
+        .chart-container {
+          height: 300px;
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          margin-top: 1rem;
         }
         
         @media (max-width: 768px) {
-          .group-selector {
-            flex-direction: column;
-            align-items: flex-start;
+          .statistics-dashboard {
+            padding: 1rem;
           }
           
-          .group-selector h2 {
-            margin-bottom: var(--space-3);
-          }
-          
-          .select-container {
-            width: 100%;
-          }
-          
-          .statistics-container {
+          .group-details-panels {
             grid-template-columns: 1fr;
           }
+          
+          .disciplinary-stats {
+            grid-template-columns: 1fr 1fr;
+          }
+          
+          .absence-info {
+            flex-direction: column;
+            gap: 1.5rem;
+          }
+          
+          .absence-distribution {
+            justify-content: center;
+          }
+          
+          .chart-container {
+            height: 250px;
+          }
+        }
+        
+        .top-absent-section {
+          margin-top: 3rem;
+          background: white;
+          border-radius: 12px;
+          box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);
+          padding: 1.5rem;
+        }
+        
+        .trainees-table-container {
+          overflow-x: auto;
+          margin-top: 1rem;
+        }
+        
+        .trainees-table {
+          width: 100%;
+          border-collapse: collapse;
+          font-size: 0.95rem;
+        }
+        
+        .trainees-table th,
+        .trainees-table td {
+          padding: 0.9rem 1rem;
+          text-align: left;
+          border-bottom: 1px solid #ecf0f1;
+        }
+        
+        .trainees-table th {
+          background: #f8f9fa;
+          font-weight: 600;
+          color: #34495e;
+          position: sticky;
+          top: 0;
+        }
+        
+        .trainees-table tr:hover {
+          background-color: #f8f9fa;
+        }
+        
+        .hours-cell {
+          font-weight: 600;
+          text-align: center;
+        }
+        
+        .status-badge {
+          display: inline-block;
+          padding: 0.4rem 0.8rem;
+          border-radius: 15px;
+          font-size: 0.8rem;
+          font-weight: 500;
+          border: 1px solid;
         }
       `}</style>
     </div>

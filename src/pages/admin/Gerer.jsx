@@ -499,13 +499,16 @@ const Gerer = () => {
       fontSize: '0.85rem',
     },
     groupButton: {
-      backgroundColor: '#FF9800',
+      backgroundColor: '#2196F3',
       color: 'white',
       border: 'none',
       padding: '0.4rem 0.8rem',
       borderRadius: '4px',
       cursor: 'pointer',
       fontSize: '0.85rem',
+      fontWeight: 'bold',
+      boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+      transition: 'all 0.2s ease',
     },
     noAssignedGroups: {
       fontStyle: 'italic',
@@ -633,29 +636,39 @@ const Gerer = () => {
     },
     checkboxGrid: {
       display: 'grid',
-      gridTemplateColumns: 'repeat(3, 1fr)',
+      gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))',
       gap: '1rem',
       marginTop: '1rem',
+      maxHeight: '300px',
+      overflowY: 'auto',
+      padding: '10px',
+      border: '1px solid #e0e0e0',
+      borderRadius: '8px',
+      background: '#f9f9f9',
     },
     checkboxLabel: {
       display: 'flex',
       alignItems: 'center',
       cursor: 'pointer',
-      padding: '8px 12px',
-      borderRadius: '4px',
-      transition: 'all 0.2s ease',
+      padding: '10px 12px',
+      borderRadius: '6px',
+      transition: 'all 0.3s ease',
+      fontWeight: 'bold',
     },
     checkboxLabelSelected: {
       backgroundColor: '#e3f2fd',
       border: '1px solid #2196F3',
+      boxShadow: '0 2px 4px rgba(33, 150, 243, 0.2)',
     },
     checkboxLabelUnselected: {
-      backgroundColor: '#f9f9f9',
+      backgroundColor: 'white',
       border: '1px solid #ddd',
+      boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
     },
     checkboxInput: {
       marginRight: '8px',
-    }
+      transform: 'scale(1.2)',
+    },
   };
 
   return (
@@ -962,17 +975,46 @@ const Gerer = () => {
       {/* Group Management Modal */}
       {showGroupModal && selectedFormateur && (
         <div style={styles.modalOverlay}>
-          <div style={styles.modalContainer}>
-            <div style={styles.modalHeader}>
-              <h2 style={styles.modalTitle}>Choisir les groupes pour {selectedFormateur.firstName} {selectedFormateur.lastName}</h2>
+          <div style={{
+            ...styles.modalContainer,
+            maxWidth: '600px',
+            borderRadius: '12px',
+            boxShadow: '0 8px 24px rgba(0,0,0,0.2)',
+          }}>
+            <div style={{
+              ...styles.modalHeader,
+              borderBottom: '1px solid #e0e0e0',
+              paddingBottom: '15px',
+            }}>
+              <h2 style={{
+                ...styles.modalTitle,
+                fontSize: '1.6rem',
+                color: '#1565C0',
+              }}>Groupes - {selectedFormateur.firstName} {selectedFormateur.lastName}</h2>
               <button 
-                style={styles.closeButton} 
+                style={{
+                  ...styles.closeButton,
+                  fontSize: '1.8rem',
+                  color: '#555',
+                }}
                 onClick={() => setShowGroupModal(false)}
               >
                 ×
               </button>
             </div>
             
+            <div style={{marginBottom: '15px', marginTop: '15px'}}>
+              <p style={{color: '#555', fontSize: '1rem', marginBottom: '15px'}}>
+                Sélectionnez les groupes à assigner à ce formateur:
+              </p>
+              
+              <div style={{marginBottom: '10px'}}>
+                <span style={{fontWeight: 'bold', color: '#1976D2'}}>
+                  {selectedGroups.length} groupe(s) sélectionné(s)
+                </span>
+              </div>
+            </div>
+
             <div style={styles.checkboxGrid}>
               {availableGroups.map(group => {
                 const isSelected = selectedGroups.includes(group);
@@ -996,15 +1038,30 @@ const Gerer = () => {
               })}
             </div>
             
-            <div style={styles.modalButtonsContainer}>
+            <div style={{
+              ...styles.modalButtonsContainer,
+              marginTop: '25px',
+            }}>
               <button 
-                style={styles.cancelButton} 
+                style={{
+                  ...styles.cancelButton,
+                  borderRadius: '6px',
+                  transition: 'all 0.2s ease',
+                  padding: '10px 20px',
+                }}
                 onClick={() => setShowGroupModal(false)}
               >
                 Annuler
               </button>
               <button 
-                style={styles.saveButton} 
+                style={{
+                  ...styles.saveButton,
+                  backgroundColor: '#1976D2',
+                  borderRadius: '6px',
+                  transition: 'all 0.2s ease',
+                  padding: '10px 20px',
+                  boxShadow: '0 2px 5px rgba(0,0,0,0.2)',
+                }}
                 onClick={saveGroupAssignments}
               >
                 Valider

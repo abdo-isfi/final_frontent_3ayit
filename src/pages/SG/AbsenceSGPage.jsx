@@ -2,6 +2,35 @@ import React, { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import logo from "../../images/Logo-OFPPT.jpg"
 import "../../index.css";
+import "../../styles/Absence.css";
+import { Modal } from "react-bootstrap";
+
+// Add custom styles with media queries for action buttons
+const actionButtonsStyles = `
+  @media (max-width: 768px) {
+    .action-buttons {
+      min-width: 250px !important;
+    }
+    
+    .action-buttons button {
+      padding: 5px 6px !important;
+      font-size: 0.75rem !important;
+      min-width: 75px !important;
+    }
+  }
+
+  @media (max-width: 576px) {
+    .action-buttons {
+      min-width: 220px !important;
+    }
+    
+    .action-buttons button {
+      padding: 4px 5px !important;
+      font-size: 0.7rem !important;
+      min-width: 65px !important;
+    }
+  }
+`;
 
 const AbsenceSGPage = () => {
   const [absenceRecords, setAbsenceRecords] = useState([]);
@@ -33,6 +62,27 @@ const AbsenceSGPage = () => {
   const [validatingAbsence, setValidatingAbsence] = useState(null);
   const [showValidationModal, setShowValidationModal] = useState(false);
   const [validationComment, setValidationComment] = useState('');
+  // Add justified state
+  const [isJustified, setIsJustified] = useState(false);
+  const [justificationComment, setJustificationComment] = useState('');
+  
+  // Add filter for justified status
+  const [justifiedFilter, setJustifiedFilter] = useState("all"); // "all", "justified", "not_justified"
+  
+  // Add new state for editing functionality
+  const [editingAbsence, setEditingAbsence] = useState(null);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editStatus, setEditStatus] = useState('');
+  
+  // Add state for billet d'entrée
+  const [showBilletEntreeFilter, setShowBilletEntreeFilter] = useState(false);
+  const [hasBilletEntree, setHasBilletEntree] = useState(false);
+  
+  // First, add state for toast notifications at the top with other state variables
+  const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
+  
+  // Add state for validation confirmation modal
+  const [showValidationConfirm, setShowValidationConfirm] = useState(false);
   
   const navigate = useNavigate();
   
@@ -49,6 +99,15 @@ const AbsenceSGPage = () => {
     return () => {
       window.removeEventListener('storage', handleStorageChange);
     };
+  }, []);
+  
+  useEffect(() => {
+    const handleFocus = () => {
+      loadAbsenceData();
+      loadTraineesData();
+    };
+    window.addEventListener('focus', handleFocus);
+    return () => window.removeEventListener('focus', handleFocus);
   }, []);
   
   const handleStorageChange = (e) => {
@@ -79,10 +138,15 @@ const AbsenceSGPage = () => {
       Object.keys(studentAbs).forEach(cef => {
         const studentAbsenceList = studentAbs[cef] || [];
         studentAbsenceList.forEach(absence => {
-          flattened.push({
+          // Ensure all required fields exist
+          const processedAbsence = {
             ...absence,
-            cef
-          });
+            cef,
+            isValidated: absence.isValidated !== undefined ? absence.isValidated : false,
+            isJustified: absence.isJustified !== undefined ? absence.isJustified : false,
+            hasBilletEntree: absence.hasBilletEntree !== undefined ? absence.hasBilletEntree : false
+          };
+          flattened.push(processedAbsence);
         });
       });
       
@@ -153,6 +217,26 @@ const AbsenceSGPage = () => {
       );
     }
     
+    // Apply justified status filter if not "all"
+    if (justifiedFilter !== "all") {
+      if (justifiedFilter === "justified") {
+        filtered = filtered.filter(absence => absence.isJustified === true);
+      } else if (justifiedFilter === "not_justified") {
+        filtered = filtered.filter(absence => 
+          (absence.status === 'absent') && 
+          (absence.isJustified === false || absence.isJustified === undefined)
+        );
+      }
+    }
+    
+    // Apply billet d'entrée filter if enabled
+    if (showBilletEntreeFilter) {
+      filtered = filtered.filter(absence => 
+        (absence.status === 'absent') && 
+        (!absence.hasBilletEntree || absence.hasBilletEntree === false)
+      );
+    }
+    
     // Apply search filter - only search by name and CEF
     if (searchTerm) {
       const term = searchTerm.toLowerCase();
@@ -205,11 +289,32 @@ const AbsenceSGPage = () => {
   };
   
   const handleDateFilter = (e) => {
-    setFilterDate(e.target.value);
+    const date = e.target.value;
+    setFilterDate(date);
+    
+    // Update day of week when date changes
+    if (date) {
+      setDayOfWeek(getDayOfWeek(date));
+    } else {
+      setDayOfWeek("");
+    }
   };
   
   const handleGroupFilter = (e) => {
-    setFilterGroup(e.target.value);
+    const group = e.target.value;
+    setFilterGroup(group);
+    
+    // Just set the group in state, but don't actually filter yet
+    // This will wait for the user to click the filter button
+    
+    // Show toast indicating the group selection
+    if (group) {
+      setToast({
+        show: true,
+        message: `Groupe "${group}" sélectionné. Cliquez sur Filtrer pour afficher les résultats.`,
+        type: 'info'
+      });
+    }
   };
   
   const handleStatusFilter = (e) => {
@@ -221,6 +326,12 @@ const AbsenceSGPage = () => {
     setFilterGroup("");
     setSearchTerm("");
     setStatusFilter("all");
+    setJustifiedFilter("all");
+    
+    // Reset billet filter if it's active
+    if (showBilletEntreeFilter) {
+      setShowBilletEntreeFilter(false);
+    }
   };
   
   const handleViewStudentAbsences = (trainee) => {
@@ -291,11 +402,29 @@ const AbsenceSGPage = () => {
     return date.toLocaleDateString('fr-FR');
   };
   
-  // Get counts of absences by status
+  // Update the getAbsenceStats function to calculate actual absences for the selected group
   const getAbsenceStats = () => {
-    // Always return zero for absence stats
-    return { totalAbsent: 0, totalLate: 0 };
+    // If no group is selected, return zeros
+    if (!filterGroup) {
+      return { totalAbsent: 0, totalLate: 0 };
+    }
+    
+    // Get all absences for the selected group
+    const groupAbsences = flattenedAbsences.filter(absence => absence.groupe === filterGroup);
+    
+    // Count absent and late statuses
+    const totalAbsent = groupAbsences.filter(absence => absence.status === 'absent').length;
+    const totalLate = groupAbsences.filter(absence => absence.status === 'late').length;
+    
+    return { totalAbsent, totalLate };
   };
+  
+  // Recalculate stats when the filter group changes
+  useEffect(() => {
+    // This will trigger a re-render with updated stats when group filter changes
+    const stats = getAbsenceStats();
+    // We don't need to store this in state, the function will recalculate when needed
+  }, [filterGroup, flattenedAbsences]);
   
   const { totalAbsent, totalLate } = getAbsenceStats();
   
@@ -306,8 +435,16 @@ const AbsenceSGPage = () => {
     // Calculate actual hours instead of returning 0
     let totalHours = 0;
     
+    // Count lateness occurrences
+    const lateArrivals = absences.filter(absence => absence.status === 'late').length;
+    
     absences.forEach(absence => {
       if (absence.status === 'absent') {
+        // Skip counting hours if the absence is justified
+        if (absence.isJustified) {
+          return;
+        }
+        
         // Full day absence is typically 8 hours
         if (!absence.startTime || !absence.endTime) {
           totalHours += 8;
@@ -323,8 +460,11 @@ const AbsenceSGPage = () => {
           }
         }
       } else if (absence.status === 'late') {
-        // Late arrivals typically count as 1 hour
-        totalHours += 1;
+        // Only count lateness hours if the student has been late 4 or more times
+        if (lateArrivals >= 4) {
+          totalHours += 1; // Count as 1 hour after 4 lateness occurrences
+        }
+        // Otherwise, lateness doesn't add to total hours (0 hours)
       }
     });
     
@@ -335,41 +475,67 @@ const AbsenceSGPage = () => {
   const calculateAbsenceHours = (absence) => {
     if (!absence) return 0;
     
-    let hours = 0;
+    if (absence.status === 'present') {
+      return 0; // Present students have 0 hours
+    }
     
     if (absence.status === 'absent') {
+      // Return 0 hours if the absence is justified
+      if (absence.isJustified) {
+        return 0;
+      }
+      
       // Check if we have start and end times
       if (absence.startTime && absence.endTime) {
+        // Check for half-day absences based on time range
         const start = absence.startTime.split(':').map(Number);
         const end = absence.endTime.split(':').map(Number);
         
         if (start.length >= 2 && end.length >= 2) {
-          const startHour = start[0] + start[1] / 60;
-          const endHour = end[0] + end[1] / 60;
-          hours = (endHour - startHour);
-        } else {
-          // Default to 4 hours if time format is invalid
-          hours = 4;
+          const startHour = start[0];
+          const endHour = end[0];
+          const hoursDiff = endHour - startHour;
+          
+          // Determine if it's a half-day or full-day absence
+          if (hoursDiff <= 3) {
+            return 2.5; // Half-day absence (2.5 hours)
+          } else {
+            return 5; // Full-day absence (5 hours)
+          }
         }
-      } else {
-        // Default to 4 hours if no specific time provided
-        hours = 4;
       }
+      
+      // Default to full-day if no time information
+      return 5;
     } else if (absence.status === 'late') {
-      // Late arrivals count as 1 hour
-      hours = 1;
+      // Count lateness instances for this student
+      const cef = absence.cef;
+      if (cef) {
+        // Get all absences for this student
+        const studentAbs = studentAbsences[cef] || [];
+        // Count lateness occurrences
+        const lateCount = studentAbs.filter(a => a.status === 'late').length;
+        
+        // Only count hours if student has been late 4 or more times
+        if (lateCount >= 4) {
+          return lateCount; // Return the number of lateness occurrences as a tally mark
+        } else {
+          return 0; // No hours counted for fewer than 4 lateness occurrences
+        }
+      }
+      return 0; // Default to 0 if no student info available
     }
     
-    return Math.round(hours * 10) / 10; // Round to 1 decimal place
+    return 0; // Default case
   };
   
   // Calculate disciplinary note based on absences and lateness
   const calculateDisciplinaryNote = (absences) => {
     if (!absences || absences.length === 0) return 20; // Start with 20 points
     
-    // Count total absence hours
+    // Count total absence hours - only for unjustified absences
     const absenceHours = calculateTotalAbsenceHours(
-      absences.filter(a => a.status === 'absent')
+      absences.filter(a => a.status === 'absent' && !a.isJustified)
     );
     
     // Count late arrivals
@@ -389,47 +555,130 @@ const AbsenceSGPage = () => {
     return Math.round(finalNote * 10) / 10;
   };
   
-  // Add this new function to handle validation
+  // Modify handleValidateAbsence to only be used for absences
   const handleValidateAbsence = (absence) => {
+    // Only allow justification for absences
+    if (absence.status !== 'absent') {
+      setToast({
+        show: true,
+        message: "Seules les absences peuvent être justifiées",
+        type: 'error'
+      });
+      return;
+    }
+    
     setValidatingAbsence(absence);
     setShowValidationModal(true);
+    // Initialize justified status from the absence if it exists
+    setIsJustified(absence.isJustified || false);
+    setJustificationComment(absence.justificationComment || '');
+    setHasBilletEntree(absence.hasBilletEntree || false);
   };
   
-  // Add this function to save the validated absence
-  const saveValidatedAbsence = () => {
+  // Rename saveValidatedAbsence to saveJustification to better reflect its purpose
+  const saveJustification = () => {
     if (!validatingAbsence) return;
     
-    // Get all absences from localStorage
-    const storedAbsences = JSON.parse(localStorage.getItem('absences') || '[]');
-    
-    // Find and update the specific absence
-    const updatedAbsences = storedAbsences.map(abs => {
-      if (abs.id === validatingAbsence.id || 
-          (abs.studentCEF === validatingAbsence.studentCEF && 
-           abs.date === validatingAbsence.date && 
-           abs.startTime === validatingAbsence.startTime)) {
-        return {
-          ...abs,
-          isValidated: true,
-          validatedBy: 'SG', // Could be replaced with actual SG name/ID
-          validationDate: new Date().toISOString(),
-          validationComment: validationComment,
-        };
+    try {
+      // Get student absences from localStorage
+      const studentAbsencesJSON = localStorage.getItem('studentAbsences') || '{}';
+      const updatedStudentAbsences = JSON.parse(studentAbsencesJSON);
+      
+      const cef = validatingAbsence.cef;
+      if (!cef || !updatedStudentAbsences[cef]) {
+        throw new Error("Absence introuvable dans le système");
       }
-      return abs;
-    });
-    
-    // Save back to localStorage
-    localStorage.setItem('absences', JSON.stringify(updatedAbsences));
-    
-    // Update the state
-    setAbsenceRecords(updatedAbsences);
-    filterAbsences();
-    
-    // Close the modal
-    setShowValidationModal(false);
-    setValidatingAbsence(null);
-    setValidationComment('');
+      
+      // Update the specific absence in the student's absence array
+      let absenceUpdated = false;
+      updatedStudentAbsences[cef] = updatedStudentAbsences[cef].map(abs => {
+        if (abs.date === validatingAbsence.date && 
+            abs.startTime === validatingAbsence.startTime && 
+            abs.status === 'absent') {
+          absenceUpdated = true;
+          return {
+            ...abs,
+            isJustified: isJustified,
+            justificationComment: justificationComment,
+            justifiedDate: new Date().toISOString(),
+            justifiedBy: 'SG',
+            hasBilletEntree: hasBilletEntree
+          };
+        }
+        return abs;
+      });
+      
+      if (!absenceUpdated) {
+        throw new Error("Impossible de trouver l'absence spécifique à justifier");
+      }
+      
+      // Save updated absences back to localStorage
+      localStorage.setItem('studentAbsences', JSON.stringify(updatedStudentAbsences));
+      
+      // Also update the absenceRecords to keep data consistent
+      const absenceRecordsJSON = localStorage.getItem('absenceRecords') || '[]';
+      const absenceRecords = JSON.parse(absenceRecordsJSON);
+      
+      // Find and update the absence record
+      for (let i = 0; i < absenceRecords.length; i++) {
+        const record = absenceRecords[i];
+        if (record.date === validatingAbsence.date &&
+            record.startTime === validatingAbsence.startTime &&
+            record.groupe === validatingAbsence.groupe) {
+          
+          // Update the student status in the students array
+          record.students = record.students.map(student => {
+            if (student.cef === cef) {
+              return {
+                ...student,
+                isJustified: isJustified,
+                justificationComment: justificationComment,
+                justifiedDate: new Date().toISOString(),
+                justifiedBy: 'SG',
+                hasBilletEntree: hasBilletEntree
+              };
+            }
+            return student;
+          });
+          
+          break;
+        }
+      }
+      
+      // Save updated records back to localStorage
+      localStorage.setItem('absenceRecords', JSON.stringify(absenceRecords));
+      
+      // Update state
+      setStudentAbsences(updatedStudentAbsences);
+      
+      // Trigger storage event for other tabs
+      window.dispatchEvent(new Event('storage'));
+      
+      // Reload data to reflect changes
+      loadAbsenceData();
+      
+      // Show success toast
+      setToast({
+        show: true,
+        message: `Absence ${isJustified ? 'justifiée' : 'non justifiée'} avec succès!`,
+        type: 'success'
+      });
+      
+      // Close the modal
+      setShowValidationModal(false);
+      setValidatingAbsence(null);
+      setValidationComment('');
+      setIsJustified(false);
+      setJustificationComment('');
+      setHasBilletEntree(false);
+    } catch (error) {
+      console.error("Erreur lors de la justification de l'absence:", error);
+      setToast({
+        show: true,
+        message: "Une erreur est survenue lors de la justification: " + error.message,
+        type: 'error'
+      });
+    }
   };
   
   // Add a special function to reset all absence data
@@ -480,23 +729,38 @@ const AbsenceSGPage = () => {
       });
       localStorage.setItem('studentAbsences', JSON.stringify(emptyAbsences));
       
-      // Show success message
-      alert('Toutes les absences ont été réinitialisées à zéro avec succès!');
+      // Show success toast
+      setToast({
+        show: true,
+        message: 'Toutes les absences ont été réinitialisées à zéro avec succès!',
+        type: 'success'
+      });
       
       // Reload the page to reflect changes
-      window.location.reload();
+      setTimeout(() => {
+        window.location.reload();
+      }, 2000);
     } catch (error) {
       console.error('Error resetting absence data:', error);
-      alert('Erreur lors de la réinitialisation des absences: ' + error.message);
+      setToast({
+        show: true,
+        message: 'Erreur lors de la réinitialisation des absences: ' + error.message,
+        type: 'error'
+      });
     } finally {
       setLoading(false);
     }
   };
   
-  // Add a new function to handle bulk validation of all absences
-  const handleBulkValidation = () => {
+  // Modify handleBulkValidation to handleBulkJustification
+  const handleBulkJustification = () => {
+    // First ask whether absences are justified or not
+    const isJustified = window.confirm(
+      "Ces absences sont-elles justifiées? Cliquez sur OK pour les marquer comme justifiées, ou Annuler pour les marquer comme non justifiées."
+    );
+    
     const confirmValidation = window.confirm(
-      "Êtes-vous sûr de vouloir valider toutes les absences affichées? Cette action mettra à jour les heures totales et les notes de discipline pour tous les stagiaires concernés."
+      `Êtes-vous sûr de vouloir marquer toutes les absences affichées comme ${isJustified ? 'justifiées' : 'non justifiées'}?`
     );
     
     if (!confirmValidation) return;
@@ -504,95 +768,244 @@ const AbsenceSGPage = () => {
     setBulkValidating(true);
     
     try {
-      // Get filtered absences to validate
-      const absencesToValidate = filterAbsences();
+      // Get filtered absences to justify - ONLY ABSENCES
+      const absencesToJustify = filterAbsences().filter(absence => absence.status === 'absent');
       
-      // Get all trainees data
-      const traineesJSON = localStorage.getItem('traineesData') || '[]';
-      const trainees = JSON.parse(traineesJSON);
+      if (absencesToJustify.length === 0) {
+        setToast({
+          show: true,
+          message: "Aucune absence à justifier dans les résultats filtrés.",
+          type: 'warning'
+        });
+        setBulkValidating(false);
+        return;
+      }
       
-      // Create a map to track which trainees need updates
-      const traineesToUpdate = new Map();
-      
-      // Process each absence
-      absencesToValidate.forEach(absence => {
-        const cef = absence.cef;
-        if (!cef) return;
-        
-        // Find the trainee by CEF
-        const traineeIndex = trainees.findIndex(t => (t.cef === cef || t.CEF === cef));
-        if (traineeIndex === -1) return;
-        
-        // If we haven't processed this trainee yet, initialize their data
-        if (!traineesToUpdate.has(cef)) {
-          // Get all absences for this trainee
-          const traineeAbsences = studentAbsences[cef] || [];
-          
-          // Calculate actual hours and disciplinary note
-          const absenceHours = calculateTotalAbsenceHours(traineeAbsences);
-          const disciplinaryNote = calculateDisciplinaryNote(traineeAbsences);
-          
-          traineesToUpdate.set(cef, {
-            index: traineeIndex,
-            absenceHours: absenceHours,
-            disciplinaryNote: disciplinaryNote,
-            formattedNote: `Note de discipline: ${disciplinaryNote}/20`
-          });
-        }
-        
-        // Mark the absence as validated
-        absence.isValidated = true;
-        absence.validatedBy = 'SG';
-        absence.validationDate = new Date().toISOString();
-      });
-      
-      // Update the trainees data with new absence hours and notes
-      traineesToUpdate.forEach((data, cef) => {
-        trainees[data.index].absence_hours = data.absenceHours;
-        trainees[data.index].disciplinary_note = data.formattedNote;
-      });
-      
-      // Save updated trainees data
-      localStorage.setItem('traineesData', JSON.stringify(trainees));
-      
-      // Update the student absences in localStorage
+      // Get student absences from localStorage
       const studentAbsencesJSON = localStorage.getItem('studentAbsences') || '{}';
       const updatedStudentAbsences = JSON.parse(studentAbsencesJSON);
       
-      // Update each trainee's absences with validation status
-      absencesToValidate.forEach(absence => {
+      // Get absence records to update them as well
+      const absenceRecordsJSON = localStorage.getItem('absenceRecords') || '[]';
+      const absenceRecords = JSON.parse(absenceRecordsJSON);
+      
+      // Track how many absences were updated
+      let updatedCount = 0;
+      
+      // Process each absence
+      absencesToJustify.forEach(absence => {
         const cef = absence.cef;
         if (!cef || !updatedStudentAbsences[cef]) return;
         
-        // Find and update the specific absence
+        // Update absence in the student's absence array
         updatedStudentAbsences[cef] = updatedStudentAbsences[cef].map(abs => {
-          if (abs.date === absence.date && abs.startTime === absence.startTime) {
+          if (abs.date === absence.date && abs.startTime === absence.startTime && abs.status === 'absent') {
+            updatedCount++;
             return {
               ...abs,
-              isValidated: true,
-              validatedBy: 'SG',
-              validationDate: new Date().toISOString()
+              isJustified: isJustified,
+              justificationComment: isJustified ? 'Justification en masse' : 'Non justifiée',
+              justifiedDate: new Date().toISOString(),
+              justifiedBy: 'SG',
+              hasBilletEntree: absence.hasBilletEntree || false
             };
           }
           return abs;
         });
+        
+        // Also update the corresponding absence record
+        for (let i = 0; i < absenceRecords.length; i++) {
+          const record = absenceRecords[i];
+          if (record.date === absence.date && 
+              record.startTime === absence.startTime &&
+              record.groupe === absence.groupe) {
+            
+            // Update the student status in the students array
+            record.students = record.students.map(student => {
+              if (student.cef === cef) {
+                return {
+                  ...student,
+                  isJustified: isJustified,
+                  justificationComment: isJustified ? 'Justification en masse' : 'Non justifiée',
+                  justifiedDate: new Date().toISOString(),
+                  justifiedBy: 'SG',
+                  hasBilletEntree: absence.hasBilletEntree || false
+                };
+              }
+              return student;
+            });
+            
+            break;
+          }
+        }
       });
       
-      // Save updated absences
+      // Save updated absences back to localStorage
+      localStorage.setItem('studentAbsences', JSON.stringify(updatedStudentAbsences));
+      localStorage.setItem('absenceRecords', JSON.stringify(absenceRecords));
+      
+      // Trigger storage event for other tabs
+      window.dispatchEvent(new Event('storage'));
+      
+      // Reload data to reflect changes
+      loadAbsenceData();
+      
+      // Show success toast
+      setToast({
+        show: true,
+        message: `${updatedCount} absence(s) ${isJustified ? 'justifiées' : 'non justifiées'} avec succès!`,
+        type: 'success'
+      });
+      
+      setBulkValidating(false);
+    } catch (error) {
+      console.error('Error during bulk justification:', error);
+      setToast({
+        show: true,
+        message: 'Une erreur est survenue lors de la justification en masse: ' + error.message,
+        type: 'error'
+      });
+      setBulkValidating(false);
+    }
+  };
+  
+  // Update handleBulkValidation to use the modal and validate all absences for the selected group/session
+  const handleBulkValidation = () => {
+    setShowValidationConfirm(true);
+  };
+  
+  const confirmBulkValidation = () => {
+    setBulkValidating(true);
+    setShowValidationConfirm(false);
+    try {
+      // Get all absences currently displayed in the table based on the filters
+      const filteredResults = filterAbsences();
+      
+      if (filteredResults.length === 0) {
+        setToast({
+          show: true,
+          message: "Aucune absence à valider dans les résultats filtrés.",
+          type: 'warning'
+        });
+        setBulkValidating(false);
+        return;
+      }
+      
+      // Get student absences from localStorage
+      const studentAbsencesJSON = localStorage.getItem('studentAbsences') || '{}';
+      const updatedStudentAbsences = JSON.parse(studentAbsencesJSON);
+      
+      // Track how many absences were updated
+      let validatedCount = 0;
+      
+      // Process all filtered absences
+      for (const absence of filteredResults) {
+        const cef = absence.cef;
+        if (!cef || !updatedStudentAbsences[cef]) continue;
+        
+        // Update the specific absence record
+        updatedStudentAbsences[cef] = updatedStudentAbsences[cef].map(abs => {
+          if (abs.date === absence.date && abs.startTime === absence.startTime) {
+            validatedCount++;
+            // Calculate hours based on status
+            let absenceHours = '-';
+            if (abs.status === 'absent') {
+              // For absent students, calculate hours using the utility function or default to 4
+              absenceHours = calculateAbsenceHours(abs) || 4;
+            } else if (abs.status === 'late') {
+              // For late students, check if they have excessive latenesses
+              const lateCount = countStudentLatenesses(cef);
+              if (lateCount >= 3) {
+                absenceHours = 2; // Convert excessive latenesses to absence hours
+              } else {
+                absenceHours = '-';
+              }
+            }
+            
+            return {
+              ...abs,
+              isValidated: true, // Mark as validated
+              validatedDate: new Date().toISOString(),
+              validatedBy: 'SG',
+              absenceHours: absenceHours
+            };
+          }
+          return abs;
+        });
+      }
+      
+      // Save updated absences back to localStorage
       localStorage.setItem('studentAbsences', JSON.stringify(updatedStudentAbsences));
       
-      // Update state
-      setStudentAbsences(updatedStudentAbsences);
+      // Now also update the absenceRecords for consistency
+      const absenceRecordsJSON = localStorage.getItem('absenceRecords') || '[]';
+      const absenceRecords = JSON.parse(absenceRecordsJSON);
       
-      // Reload data
+      // Update the relevant absence records with validation status
+      for (const record of absenceRecords) {
+        // If a date filter is applied, only update records for that date
+        if (filterDate && record.date !== filterDate) continue;
+        
+        // Otherwise, only update records for the selected group
+        if (record.groupe === filterGroup) {
+          record.isValidated = true;
+          record.validatedDate = new Date().toISOString();
+          record.validatedBy = 'SG';
+          
+          // Also update individual student statuses
+          if (record.students && Array.isArray(record.students)) {
+            record.students = record.students.map(student => {
+              const cef = student.cef;
+              if (!cef) return student;
+              
+              // Find matching student absence
+              const studentAbs = filteredResults.find(abs => abs.cef === cef && abs.date === record.date);
+              if (studentAbs) {
+                let absenceHours = '-';
+                if (student.status === 'absent') {
+                  absenceHours = 4; // Default absent hours
+                } else if (student.status === 'late') {
+                  const lateCount = countStudentLatenesses(cef);
+                  if (lateCount >= 3) {
+                    absenceHours = 2;
+                  }
+                }
+                
+                return {
+                  ...student,
+                  isValidated: true,
+                  validatedDate: new Date().toISOString(),
+                  validatedBy: 'SG',
+                  absenceHours: absenceHours
+                };
+              }
+              return student;
+            });
+          }
+        }
+      }
+      
+      localStorage.setItem('absenceRecords', JSON.stringify(absenceRecords));
+      
+      // Trigger storage event for other tabs
+      window.dispatchEvent(new Event('storage'));
+      
+      // Reload data to reflect changes
       loadAbsenceData();
-      loadTraineesData();
       
-      // Show success message
-      alert('Toutes les absences ont été validées avec succès! Les heures totales et notes de discipline ont été mises à jour.');
+      // Show success toast
+      setToast({
+        show: true,
+        message: `${validatedCount} absence(s) validée(s) avec succès!`,
+        type: 'success'
+      });
     } catch (error) {
-      console.error('Error validating absences:', error);
-      alert('Une erreur est survenue lors de la validation des absences: ' + error.message);
+      console.error('Error during bulk validation:', error);
+      setToast({
+        show: true,
+        message: "Une erreur est survenue lors de la validation en masse: " + error.message,
+        type: 'error'
+      });
     } finally {
       setBulkValidating(false);
     }
@@ -718,11 +1131,13 @@ const AbsenceSGPage = () => {
     
     // Create array of weekdays with dates (Monday to Saturday)
     const weekDays = [];
+    
+    // Fixed day names - Always starting with Monday as "LUN" regardless of current day
+    const dayNames = ["LUN", "MAR", "MERC", "JEU", "VEN", "SAM"];
+    
     for (let i = 0; i < 6; i++) {
       const date = new Date(weekDates.start);
       date.setDate(weekDates.start.getDate() + i);
-      
-      const dayNames = ["LUN", "MAR", "MERC", "JEU", "VEN", "SAM"];
       
       weekDays.push({
         name: dayNames[i],
@@ -753,7 +1168,7 @@ const AbsenceSGPage = () => {
       });
       
       // For each weekday, check if trainee was absent
-      const weekAbsences = weekDays.map(day => {
+      const dailyAbsences = weekDays.map(day => {
         const dateKey = day.date.toISOString().split('T')[0];
         const dayAbsences = absencesByDate[dateKey] || [];
         
@@ -767,7 +1182,7 @@ const AbsenceSGPage = () => {
       
       return {
         ...trainee,
-        weekAbsences
+        weekAbsences: dailyAbsences
       };
     });
     
@@ -1036,43 +1451,94 @@ const AbsenceSGPage = () => {
               </tr>
             </thead>
             <tbody>
-              ${reportData.trainees.map((trainee, index) => `
-                <tr>
-                  <td class="num-cell">${index + 1}</td>
-                  <td class="name-cell">${trainee.name} ${trainee.first_name}</td>
-                  ${trainee.weekAbsences.map(dayAbsence => {
-                    // For each day, create 4 time slots (Morning 1-2, Afternoon 1-2)
-                    return Array(4).fill()
-                      .map((_, timeSlot) => {
-                        let cellContent = '';
+              ${reportData.trainees.map((trainee, index) => {
+                const fullName = `${trainee.name || trainee.NOM || ''} ${trainee.first_name || trainee.PRENOM || ''}`;
+                
+                return `
+                  <tr>
+                    <td class="num-cell">${index + 1}</td>
+                    <td class="name-cell">${fullName}</td>
+                    ${reportData.weekDays.map(day => {
+                      // Find absences for this day
+                      const dayAbsence = trainee.weekAbsences.find(abs => abs.date === day.date.toISOString().split('T')[0]);
+                      
+                      // Generate cells for M1, M2, S1, S2
+                      let cells = '';
+                      for (let i = 0; i < 4; i++) {
+                        const period = i === 0 ? 'M1' : i === 1 ? 'M2' : i === 2 ? 'S1' : 'S2';
+                        let marker = '';
                         
-                        // If absent during this time slot
-                        if (dayAbsence.isAbsent) {
-                          cellContent = '<span class="absence-mark">A</span>';
-                        } 
-                        // If late during this time slot
-                        else if (dayAbsence.isLate && timeSlot === 0) {
-                          cellContent = '<span class="late-mark">R</span>';
+                        // If there are absences for this day, check if any match this period
+                        if (dayAbsence) {
+                          const dayAbsencesList = dayAbsence.absences;
+                          
+                          // Check for 5-hour morning absence (should mark both M1 and M2)
+                          const morningAbsence = dayAbsencesList.find(a => 
+                            a.status === 'absent' && 
+                            !a.isJustified &&
+                            (a.absenceHours === 5 || a.absenceHours === '5' || a.absenceHours >= 4) &&
+                            a.startTime === '08:30'
+                          );
+                          
+                          // Check for 5-hour afternoon absence (should mark both S1 and S2)
+                          const afternoonAbsence = dayAbsencesList.find(a => 
+                            a.status === 'absent' && 
+                            !a.isJustified &&
+                            (a.absenceHours === 5 || a.absenceHours === '5' || a.absenceHours >= 4) &&
+                            a.startTime === '13:30'
+                          );
+                          
+                          // Check for 2.5-hour morning absence (should mark only M1)
+                          const halfMorningAbsence = dayAbsencesList.find(a => 
+                            a.status === 'absent' && 
+                            !a.isJustified &&
+                            (a.absenceHours === 2.5 || a.absenceHours === '2.5') &&
+                            a.startTime === '08:30'
+                          );
+                          
+                          // Check for 2.5-hour afternoon absence (should mark only S1)
+                          const halfAfternoonAbsence = dayAbsencesList.find(a => 
+                            a.status === 'absent' && 
+                            !a.isJustified &&
+                            (a.absenceHours === 2.5 || a.absenceHours === '2.5') &&
+                            a.startTime === '13:30'
+                          );
+                          
+                          // Check for lateness
+                          const latenessRecord = dayAbsencesList.find(a => 
+                            a.status === 'late'
+                          );
+                          
+                          // Apply the proper marker based on the period and absence type
+                          if ((period === 'M1' || period === 'M2') && morningAbsence) {
+                            // 5-hour morning absence marks both M1 and M2
+                            marker = 'X';
+                          } else if ((period === 'S1' || period === 'S2') && afternoonAbsence) {
+                            // 5-hour afternoon absence marks both S1 and S2
+                            marker = 'X';
+                          } else if (period === 'M1' && halfMorningAbsence) {
+                            // 2.5-hour morning absence marks only M1
+                            marker = 'X';
+                          } else if (period === 'S1' && halfAfternoonAbsence) {
+                            // 2.5-hour afternoon absence marks only S1
+                            marker = 'X';
+                          } else if (period === 'M1' && latenessRecord && latenessRecord.startTime === '08:30') {
+                            // Lateness in morning
+                            marker = 'R';
+                          } else if (period === 'S1' && latenessRecord && latenessRecord.startTime === '13:30') {
+                            // Lateness in afternoon
+                            marker = 'R';
+                          }
                         }
                         
-                        return `<td>${cellContent}</td>`;
-                      })
-                      .join('');
-                  }).join('')}
-                </tr>
-              `).join('')}
-              <tr class="signature-row">
-                <td colspan="2" style="text-align: center; font-weight: bold;">Emargements des Formateurs</td>
-                ${reportData.weekDays.map(() => `
-                  <td colspan="4">&nbsp;</td>
-                `).join('')}
-              </tr>
-              <tr class="signature-row">
-                <td colspan="2" style="text-align: center; font-weight: bold;">Assistants</td>
-                ${reportData.weekDays.map(() => `
-                  <td colspan="4">&nbsp;</td>
-                `).join('')}
-              </tr>
+                        cells += `<td>${marker}</td>`;
+                      }
+                      
+                      return cells;
+                    }).join('')}
+                  </tr>
+                `;
+              }).join('')}
             </tbody>
           </table>
           
@@ -1097,14 +1563,173 @@ const AbsenceSGPage = () => {
     }, 300);
   };
   
+  // Add function to count lateness for a specific student
+  const countStudentLatenesses = (cef) => {
+    if (!cef || !studentAbsences[cef]) return 0;
+    return studentAbsences[cef].filter(a => a.status === 'late').length;
+  };
+  
+  // Add new function to handle edit absence
+  const handleEditAbsence = (absence) => {
+    setEditingAbsence(absence);
+    setEditStatus(absence.status);
+    setShowEditModal(true);
+  };
+  
+  // Function to save edited absence
+  const saveEditedAbsence = () => {
+    if (!editingAbsence) return;
+    
+    try {
+      // Get all student absences from localStorage
+      const studentAbsencesJSON = localStorage.getItem('studentAbsences') || '{}';
+      const updatedStudentAbsences = JSON.parse(studentAbsencesJSON);
+      
+      const cef = editingAbsence.cef;
+      if (!cef || !updatedStudentAbsences[cef]) {
+        throw new Error("Impossible de trouver les données d'absence pour cet étudiant");
+      }
+      
+      // Find and update the specific absence
+      updatedStudentAbsences[cef] = updatedStudentAbsences[cef].map(abs => {
+        if (abs.date === editingAbsence.date && 
+            abs.startTime === editingAbsence.startTime &&
+            abs.endTime === editingAbsence.endTime) {
+          return {
+            ...abs,
+            status: editStatus,
+            editedBy: 'SG',
+            editDate: new Date().toISOString(),
+            originalStatus: abs.originalStatus || abs.status // Keep track of original status
+          };
+        }
+        return abs;
+      });
+      
+      // Get all class-based absence records
+      const recordsJson = localStorage.getItem('absenceRecords') || '[]';
+      const records = JSON.parse(recordsJson);
+      
+      // Find and update the specific class record if it exists
+      const updatedRecords = records.map(record => {
+        if (record.date === editingAbsence.date && record.groupe === editingAbsence.groupe) {
+          // Find and update the specific student in the students array
+          if (record.students) {
+            record.students = record.students.map(student => {
+              if (student.cef === cef || student.CEF === cef) {
+                return { 
+                  ...student, 
+                  status: editStatus,
+                  editedBy: 'SG',
+                  editDate: new Date().toISOString(),
+                  originalStatus: student.originalStatus || student.status
+                };
+              }
+              return student;
+            });
+          }
+        }
+        return record;
+      });
+      
+      // Save updated absences back to localStorage
+      localStorage.setItem('studentAbsences', JSON.stringify(updatedStudentAbsences));
+      localStorage.setItem('absenceRecords', JSON.stringify(updatedRecords));
+      
+      // Update state
+      setStudentAbsences(updatedStudentAbsences);
+      setAbsenceRecords(updatedRecords);
+      
+      // Reload data to reflect changes
+      loadAbsenceData();
+      
+      // Show success toast instead of alert
+      setToast({
+        show: true,
+        message: `Le statut a été modifié de "${editingAbsence.status}" à "${editStatus}" avec succès!`,
+        type: 'success'
+      });
+      
+      // Close the modal
+      setShowEditModal(false);
+      setEditingAbsence(null);
+      setEditStatus('');
+    } catch (error) {
+      console.error("Erreur lors de la modification de l'absence:", error);
+      setToast({
+        show: true,
+        message: "Une erreur est survenue lors de la modification de l'absence: " + error.message,
+        type: 'error'
+      });
+    }
+  };
+  
+  // Add a function to hide the toast after a delay
+  const hideToast = () => {
+    setToast({ ...toast, show: false });
+  };
+  
+  // Use useEffect to automatically hide the toast after a delay
+  useEffect(() => {
+    if (toast.show) {
+      const timer = setTimeout(() => {
+        hideToast();
+      }, 5000); // Hide after 5 seconds
+      
+      return () => clearTimeout(timer);
+    }
+  }, [toast.show]);
+  
+  // Add handler for justified filter
+  const handleJustifiedFilter = (e) => {
+    setJustifiedFilter(e.target.value);
+  };
+  
+  // Add handler for billet d'entrée filter toggle
+  const handleBilletFilterToggle = () => {
+    setShowBilletEntreeFilter(!showBilletEntreeFilter);
+    
+    // If turning on the filter, make sure we're showing only absent status
+    if (!showBilletEntreeFilter) {
+      setStatusFilter("absent");
+    }
+    
+    // Show toast notification about filter change
+    setToast({
+      show: true,
+      message: !showBilletEntreeFilter 
+        ? "Affichage des stagiaires sans billet d'entrée uniquement" 
+        : "Filtre de billet d'entrée désactivé",
+      type: 'success'
+    });
+  };
+  
+  // Add new function to apply filters when button is clicked
+  const applyFilters = () => {
+    // Do the filtering here
+    const filtered = filterAbsences();
+    
+    // Show a toast message with the results
+    setToast({
+      show: true,
+      message: filtered.length > 0 
+        ? `${filtered.length} résultats trouvés avec les filtres appliqués.` 
+        : "Aucun résultat ne correspond aux filtres sélectionnés.",
+      type: filtered.length > 0 ? 'success' : 'warning'
+    });
+  };
+  
   return (
     <div className="absence-sg-container">
+      {/* Add the style tag to inject the CSS */}
+      <style dangerouslySetInnerHTML={{ __html: actionButtonsStyles }} />
+      
       <h2 className="page-title">Gestion des Absences</h2>
       
       {/* Add the reset button */}
       <div className="reset-container">
         <button 
-          className="reset-all-button"
+          className="bulk-action-button"
           onClick={resetAllAbsenceData}
           disabled={loading}
         >
@@ -1112,15 +1737,15 @@ const AbsenceSGPage = () => {
         </button>
         
         <button 
-          className="validate-all-button"
+          className="bulk-action-button bulk-validate-button"
           onClick={handleBulkValidation}
-          disabled={loading || bulkValidating}
+          disabled={!filterGroup || bulkValidating}
         >
           {bulkValidating ? 'Validation en cours...' : 'Valider toutes les absences affichées'}
         </button>
         
         <button 
-          className="report-button"
+          className="bulk-action-button"
           onClick={generateWeeklyReport}
           disabled={!filterGroup}
         >
@@ -1137,16 +1762,19 @@ const AbsenceSGPage = () => {
         <div className="stat-card absent">
           <h3>Total des Absences</h3>
           <div className="stat-value">{totalAbsent}</div>
+          <div className="stat-subtitle">{filterGroup ? `Groupe: ${filterGroup}` : 'Aucun groupe sélectionné'}</div>
         </div>
         <div className="stat-card late">
           <h3>Total des Retards</h3>
           <div className="stat-value">{totalLate}</div>
+          <div className="stat-subtitle">{filterGroup ? `Groupe: ${filterGroup}` : 'Aucun groupe sélectionné'}</div>
         </div>
       </div>
       
-      {/* Filters */}
+      {/* Filters - redesigned to a single horizontal row */}
       <div className="table-filters">
-        <div className="filter-left">
+        <div className="filter-row">
+          <div className="filter-group">
             <label htmlFor="group-filter">Groupe:</label>
             <select 
               id="group-filter"
@@ -1159,52 +1787,87 @@ const AbsenceSGPage = () => {
                 <option key={index} value={group}>{group}</option>
               ))}
             </select>
+          </div>
           
-          {/* Add day of week display */}
-          <div className="day-of-week">
+          <div className="filter-group">
+            <label htmlFor="date-filter">Date:</label>
+            <input 
+              type="date" 
+              id="date-filter"
+              value={filterDate}
+              onChange={handleDateFilter}
+              className="date-input"
+            />
+          </div>
+          
+          <div className="filter-group">
+            <label htmlFor="status-filter">Statut:</label>
+            <select 
+              id="status-filter"
+              value={statusFilter}
+              onChange={handleStatusFilter}
+              className="select-input"
+            >
+              <option value="all">Tous les statuts</option>
+              <option value="absent">Absent</option>
+              <option value="late">Retard</option>
+              <option value="present">Présent</option>
+            </select>
+          </div>
+          
+          <div className="filter-group">
+            <label htmlFor="justified-filter">Justification:</label>
+            <select 
+              id="justified-filter"
+              value={justifiedFilter}
+              onChange={handleJustifiedFilter}
+              className="select-input"
+            >
+              <option value="all">Toutes</option>
+              <option value="justified">Justifiées</option>
+              <option value="not_justified">Non justifiées</option>
+            </select>
+          </div>
+          
+          <div className="filter-group">
+            <label htmlFor="search-input">Recherche:</label>
+            <input 
+              type="text"
+              id="search-input"
+              value={searchTerm}
+              onChange={handleSearch}
+              placeholder="Recherche par nom ou CEF..."
+              className="search-input"
+            />
+          </div>
+          
+          {/* Day of week display */}
+          <div className="filter-group day-of-week">
             <label>Jour:</label>
             <div className="day-display">
               {dayOfWeek || "---"}
             </div>
           </div>
           
-          <label htmlFor="status-filter" className="status-label">Statut:</label>
-          <select 
-            id="status-filter"
-            value={statusFilter}
-            onChange={handleStatusFilter}
-            className="select-input"
-          >
-            <option value="all">Tous les statuts</option>
-            <option value="absent">Absents</option>
-            <option value="late">Retards</option>
-            <option value="present">Présents</option>
-          </select>
-        </div>
-        
-        <div className="filter-right">
-          <label htmlFor="date-filter">Date:</label>
-          <input 
-            type="date" 
-            id="date-filter"
-            value={filterDate}
-            onChange={handleDateFilter}
-            className="date-input"
-          />
-          
-          <label htmlFor="search-input" className="search-label">Recherche:</label>
-            <input 
-              type="text"
-              id="search-input"
-              value={searchTerm}
-              onChange={handleSearch}
-            placeholder="Recherche par nom ou CEF..."
-              className="search-input"
-            />
-          
-          <button className="clear-button" onClick={handleClearFilters}>
-            Réinitialiser
-          </button>
+          {/* Keep only the Filter button, remove Réinitialiser and Sans billet d'entrée */}
+          <div className="filter-actions">
+            <button 
+              className="filter-button" 
+              onClick={applyFilters}
+              style={{
+                backgroundColor: '#2196F3',
+                color: 'white',
+                fontWeight: 'bold',
+                padding: '8px 16px',
+                borderRadius: '4px',
+                border: 'none',
+                cursor: 'pointer',
+                boxShadow: '0 2px 5px rgba(0,0,0,0.2)'
+              }}
+            >
+              <i className="fas fa-filter" style={{ marginRight: '5px' }}></i> Filtrer
+            </button>
+          </div>
         </div>
       </div>
       
@@ -1214,7 +1877,7 @@ const AbsenceSGPage = () => {
       ) : error ? (
         <div className="error-message">{error}</div>
       ) : (
-        <>
+        <div>
           <div className="selected-filters">
             <div className="filter-display">
               <span className="filter-label">Groupe sélectionné:</span>
@@ -1230,113 +1893,50 @@ const AbsenceSGPage = () => {
             </div>
           </div>
           
-        <div className="table-container">
+          <div className="table-container">
             {filterAbsences().length === 0 ? (
-            <div className="no-data-message">
-              Aucun enregistrement d'absence trouvé
-              {filterDate || filterGroup || searchTerm ? " avec les filtres sélectionnés" : ""}.
-            </div>
-          ) : (
-            <table className="absence-table">
-              <thead>
-                <tr>
+              <div className="no-data-message">
+                Aucun enregistrement d'absence trouvé
+                {filterDate || filterGroup || searchTerm ? " avec les filtres sélectionnés" : ""}.
+              </div>
+            ) : (
+              <table className="absence-table">
+                <thead>
+                  <tr>
                     <th>CEF</th>
                     <th>Nom et Prénom</th>
-                  <th>Date</th>
                     <th>Heures</th>
                     <th>Statut</th>
-                  <th>Validé</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                  {filterAbsences().map((absence, index) => {
-                    const traineeData = getTraineeData(absence.cef);
-                    const hoursValue = calculateAbsenceHours(absence);
-                  
-                  return (
-                      <tr
-                        key={index}
-                        className={`status-row-${absence.status}`}
-                      >
-                        <td>{absence.cef}</td>
-                        <td>{traineeData?.name || 'N/A'} {traineeData?.first_name || ''}</td>
-                        <td>{formatDate(absence.date)}</td>
-                        <td>{hoursValue}h</td>
-                        <td>
-                          <span className={`status-badge ${absence.status}`}>
-                            {absence.status === 'absent' && 'Absent'}
-                            {absence.status === 'late' && 'Retard'}
-                            {absence.status === 'present' && 'Présent'}
-                          </span>
-                        </td>
-                        <td>
-                          <span className={`validation-badge ${absence.isValidated ? 'validated' : 'not-validated'}`}>
-                            {absence.isValidated ? 'Validé' : 'Non validé'}
-                          </span>
-                        </td>
-                        <td className="action-buttons">
-                        <button 
-                          className="view-details-btn"
-                            onClick={() => handleViewStudentAbsences(traineeData)}
-                          >
-                            Détails
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          )}
-        </div>
-        </>
-      )}
-      
-      {/* Student absences modal */}
-      {showAbsenceModal && selectedTrainee && (
-        <div className="modal-overlay">
-          <div className="modal-content">
-            <div className="modal-header">
-              <h2>Absences de l'élève</h2>
-              <button className="close-button" onClick={handleCloseModal}>&times;</button>
-            </div>
-            <div className="modal-body">
-              <div className="student-info">
-                <div className="info-row">
-                  <div className="info-item">
-                    <strong>CEF:</strong> {selectedTrainee.cef || selectedTrainee.CEF}
-                  </div>
-                  <div className="info-item">
-                    <strong>Groupe:</strong> {selectedTrainee.class || selectedTrainee.GROUPE}
-                  </div>
-                </div>
-                <div className="info-row">
-                  <div className="info-item">
-                    <strong>Nom:</strong> {selectedTrainee.name || selectedTrainee.NOM}
-                  </div>
-                  <div className="info-item">
-                    <strong>Prénom:</strong> {selectedTrainee.first_name || selectedTrainee.PRENOM}
-                  </div>
-                </div>
-              </div>
-              
-              <div className="absence-history">
-                <h3>Historique des Absences</h3>
-                
-                {traineeAbsences.length > 0 ? (
-                  <table className="student-absences-table">
-                    <thead>
-                      <tr>
-                        <th>Date</th>
-                        <th>Statut</th>
-                        <th>Formateur</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {traineeAbsences.map((absence, index) => (
-                        <tr key={index} className={`status-${absence.status}`}>
-                          <td>{formatDate(absence.date)}</td>
+                    <th>Validé</th>
+                    <th>Justifié</th>
+                    <th>Billet</th>
+                    <th style={{ minWidth: '220px' }}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(() => {
+                    // Use the filtered absences directly instead of trying to recreate the list
+                    const filteredResults = filterAbsences();
+                    
+                    if (filteredResults.length === 0) {
+                      return null;
+                    }
+                    
+                    return filteredResults.map((absence, index) => {
+                      const trainee = getTraineeData(absence.cef);
+                      
+                      return (
+                        <tr key={`${absence.cef}-${absence.date}-${index}`}>
+                          <td>{absence.cef}</td>
+                          <td>{trainee.name} {trainee.first_name}</td>
+                          <td>
+                            {absence.status === 'present' ? '0h' :
+                             absence.status === 'late' ? 
+                              (calculateAbsenceHours(absence) > 0 ? `${calculateAbsenceHours(absence)}` : '0h') :
+                             absence.status === 'absent' ? 
+                              (absence.isJustified ? '0h' : `${calculateAbsenceHours(absence)}h`) : 
+                              '-'}
+                          </td>
                           <td>
                             <span className={`status-badge ${absence.status}`}>
                               {absence.status === 'absent' && 'Absent'}
@@ -1344,717 +1944,403 @@ const AbsenceSGPage = () => {
                               {absence.status === 'present' && 'Présent'}
                             </span>
                           </td>
-                          <td>{absence.teacher || 'Non spécifié'}</td>
+                          <td>
+                            <span
+                              className={`validation-status ${absence.isValidated ? 'validated' : 'not-validated'}`}
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                width: 32,
+                                height: 32,
+                                borderRadius: '50%',
+                                background: absence.isValidated ? '#27ae60' : '#999',
+                                color: 'white',
+                                fontSize: '16px'
+                              }}
+                            >
+                              {absence.isValidated ? '✓' : '✗'}
+                            </span>
+                          </td>
+                          <td>
+                            <span 
+                              className={`validation-status ${absence.isJustified ? 'justified' : 'not-justified'}`}
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                width: 32,
+                                height: 32,
+                                borderRadius: '50%',
+                                background: absence.isJustified ? '#27ae60' : (absence.status === 'absent' ? '#e74c3c' : '#999'),
+                                color: 'white',
+                                fontSize: '16px'
+                              }}
+                            >
+                              {absence.isJustified ? '✓' : '✗'}
+                            </span>
+                          </td>
+                          <td>
+                            <span 
+                              className={`validation-status ${absence.hasBilletEntree ? 'has-billet' : 'no-billet'}`}
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                width: 32,
+                                height: 32,
+                                borderRadius: '50%',
+                                background: absence.hasBilletEntree ? '#27ae60' : (absence.status === 'absent' ? '#f39c12' : '#999'),
+                                color: 'white',
+                                fontSize: '16px'
+                              }}
+                            >
+                              {absence.hasBilletEntree ? '✓' : '✗'}
+                            </span>
+                          </td>
+                          <td className="action-buttons" style={{ 
+                            display: 'flex', 
+                            flexDirection: 'row', 
+                            flexWrap: 'nowrap',
+                            gap: '4px', 
+                            justifyContent: 'flex-start',
+                            minWidth: '280px'
+                          }}>
+                            {absence.status === 'absent' && 
+                              <button 
+                                className="validate-button"
+                                onClick={() => handleValidateAbsence(absence)}
+                                title="Justifier l'absence"
+                                style={{
+                                  backgroundColor: '#28a745',
+                                  color: 'white',
+                                  border: 'none',
+                                  borderRadius: '4px',
+                                  padding: '6px 8px',
+                                  fontWeight: 'bold',
+                                  fontSize: '0.8rem',
+                                  cursor: 'pointer',
+                                  boxShadow: '0 1px 2px rgba(0,0,0,0.1)',
+                                  flex: '1',
+                                  minWidth: '85px',
+                                  textTransform: 'uppercase',
+                                  whiteSpace: 'nowrap'
+                                }}
+                              >
+                                {absence.isJustified ? 'Modifier' : 'Justifier'}
+                              </button>
+                            }
+                            <button 
+                              className="view-button"
+                              onClick={() => handleViewStudentAbsences(trainee)}
+                              title="Voir les détails"
+                              style={{
+                                backgroundColor: '#2196F3',
+                                color: 'white',
+                                border: 'none',
+                                borderRadius: '4px',
+                                padding: '6px 8px',
+                                fontWeight: 'bold',
+                                fontSize: '0.8rem',
+                                cursor: 'pointer',
+                                boxShadow: '0 1px 2px rgba(0,0,0,0.1)',
+                                flex: '1',
+                                minWidth: '85px',
+                                textTransform: 'uppercase',
+                                whiteSpace: 'nowrap'
+                              }}
+                            >
+                              Détails
+                            </button>
+                            <button 
+                              className="edit-button"
+                              onClick={() => handleEditAbsence(absence)}
+                              title="Modifier le statut"
+                              style={{
+                                backgroundColor: '#9C27B0',
+                                color: 'white',
+                                border: 'none',
+                                borderRadius: '4px',
+                                padding: '6px 8px',
+                                fontWeight: 'bold',
+                                fontSize: '0.8rem',
+                                cursor: 'pointer',
+                                boxShadow: '0 1px 2px rgba(0,0,0,0.1)',
+                                flex: '1',
+                                minWidth: '85px',
+                                textTransform: 'uppercase',
+                                whiteSpace: 'nowrap'
+                              }}
+                            >
+                              Modifier
+                            </button>
+                          </td>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                ) : (
-                  <div className="no-absences-message">
-                    Aucune absence enregistrée pour cet élève.
+                      );
+                    });
+                  })()}
+                </tbody>
+              </table>            )}
+          </div>
+        </div>
+      )}
+      
+      {showValidationModal && validatingAbsence && (
+        <Modal show={showValidationModal} onHide={() => setShowValidationModal(false)} centered dialogClassName="justify-modal-dialog">
+          <Modal.Header closeButton style={{ borderBottom: '1px solid #e5e5e5', background: '#f8f9fa' }}>
+            <Modal.Title style={{ fontWeight: 'bold', fontSize: '1.3rem', color: '#2c3e50' }}>Validation de l'absence</Modal.Title>
+          </Modal.Header>
+          <Modal.Body style={{ padding: '28px 32px 20px 32px', background: '#fcfcfc', borderRadius: '0 0 8px 8px', boxShadow: '0 2px 16px rgba(44,62,80,0.07)', fontSize: '1rem', maxHeight: '60vh', overflowY: 'auto' }}>
+            <div className="validation-details" style={{ display: 'flex', flexDirection: 'column', gap: '28px' }}>
+              <div style={{ borderBottom: '1px solid #e5e5e5', paddingBottom: 16 }}>
+                <h3 style={{ fontSize: '1.15rem', color: '#2980b9', marginBottom: 12 }}>Informations de l'absence</h3>
+                <div className="info-row" style={{ display: 'flex', gap: 24, marginBottom: 8, fontSize: '1rem' }}>
+                  <div className="info-item"><strong>CEF:</strong> {validatingAbsence.cef}</div>
+                  <div className="info-item"><strong>Étudiant:</strong> {getTraineeData(validatingAbsence.cef)?.name} {getTraineeData(validatingAbsence.cef)?.first_name}</div>
+                </div>
+                <div className="info-row" style={{ display: 'flex', gap: 24, fontSize: '1rem' }}>
+                  <div className="info-item"><strong>Date:</strong> {formatDate(validatingAbsence.date)}</div>
+                  <div className="info-item"><strong>Statut:</strong> <span className={`status-badge ${validatingAbsence.status}`}>{validatingAbsence.status === 'absent' && 'Absent'}{validatingAbsence.status === 'late' && 'Retard'}{validatingAbsence.status === 'present' && 'Présent'}</span></div>
+                </div>
+              </div>
+              <div className="justification-section" style={{ borderBottom: '1px solid #e5e5e5', paddingBottom: 16 }}>
+                <h3 style={{ fontSize: '1.08rem', color: '#16a085', marginBottom: 10 }}>Justification</h3>
+                <div className="justify-options" style={{ display: 'flex', gap: 32, marginBottom: 10 }}>
+                  <label className="justify-option" style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '1rem' }}>
+                    <input type="radio" name="justifiedStatus" checked={isJustified === true} onChange={() => setIsJustified(true)} />
+                    <span className="justify-label">Absence justifiée</span>
+                  </label>
+                  <label className="justify-option" style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '1rem' }}>
+                    <input type="radio" name="justifiedStatus" checked={isJustified === false} onChange={() => setIsJustified(false)} />
+                    <span className="justify-label">Absence non justifiée</span>
+                  </label>
+                </div>
+                {isJustified && (
+                  <div className="justification-comment-section" style={{ marginTop: 10 }}>
+                    <label htmlFor="justification-comment" style={{ fontWeight: 500, color: '#555', fontSize: '1rem' }}>Raison de la justification:</label>
+                    <textarea id="justification-comment" className="justification-comment" value={justificationComment} onChange={(e) => setJustificationComment(e.target.value)} placeholder="Précisez la raison de la justification (certificat médical, etc.)" rows={2} style={{ width: '100%', marginTop: 6, borderRadius: 4, border: '1px solid #d1d5db', padding: 8, fontSize: '1rem' }} />
                   </div>
                 )}
               </div>
-            </div>
-          </div>
-        </div>
-      )}
-      
-      {/* New Validation Modal */}
-      {showValidationModal && validatingAbsence && (
-        <div className="modal-overlay">
-          <div className="modal-content">
-            <div className="modal-header">
-              <h2>Valider l'absence</h2>
-              <button className="close-button" onClick={() => setShowValidationModal(false)}>
-                &times;
-              </button>
-            </div>
-            <div className="modal-body">
-              <div className="validation-info">
-                <h3>Informations de l'absence</h3>
-                <div className="info-row">
-                  <div className="info-item">
-                    <strong>CEF:</strong> {validatingAbsence.cef}
-                  </div>
-                  <div className="info-item">
-                    <strong>Étudiant:</strong> {getTraineeData(validatingAbsence.cef)?.name} {getTraineeData(validatingAbsence.cef)?.first_name}
-                  </div>
-                  <div className="info-item">
-                    <strong>Groupe:</strong> {getTraineeData(validatingAbsence.cef)?.class}
-                  </div>
-                </div>
-                <div className="info-row">
-                  <div className="info-item">
-                    <strong>Date:</strong> {formatDate(validatingAbsence.date)}
-                  </div>
-                  <div className="info-item">
-                    <strong>Statut:</strong> {validatingAbsence.status === 'absent' ? 'Absent' : validatingAbsence.status === 'late' ? 'Retard' : 'Présent'}
-                  </div>
-                </div>
-                <div className="info-row">
-                  <div className="info-item">
-                    <strong>Formateur:</strong> {validatingAbsence.teacher || 'Non spécifié'}
-                  </div>
-                </div>
-                
-                <div className="comment-section">
-                  <label htmlFor="validation-comment">Commentaire de validation:</label>
-                  <textarea
-                    id="validation-comment"
-                    className="validation-comment"
-                    value={validationComment}
-                    onChange={(e) => setValidationComment(e.target.value)}
-                    placeholder="Ajoutez vos remarques ici..."
-                    rows={3}
-                  />
-                </div>
-                
-                <div className="validation-actions">
-                  <button
-                    className="cancel-btn"
-                    onClick={() => setShowValidationModal(false)}
-                  >
-                    Annuler
-                  </button>
-                  <button
-                    className="confirm-btn"
-                    onClick={saveValidatedAbsence}
-                  >
-                    Confirmer la validation
-                  </button>
-                </div>
+              <div className="billet-entree-section" style={{ borderBottom: '1px solid #e5e5e5', paddingBottom: 16, background: '#f6fafd', borderRadius: 6, padding: '12px 10px', marginTop: 8 }}>
+                <label className="billet-option" style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '1rem' }}>
+                  <input type="checkbox" checked={hasBilletEntree} onChange={(e) => setHasBilletEntree(e.target.checked)} />
+                  <span className="billet-label">Billet d'entrée fourni</span>
+                </label>
+                <p className="billet-info" style={{ color: '#888', fontSize: '0.97rem', marginTop: 4, marginBottom: 0 }}>
+                  Cochez si l'élève a présenté un billet d'entrée à l'enseignant
+                </p>
+              </div>
+              <div className="comment-section" style={{ marginBottom: 0, marginTop: 8 }}>
+                <label htmlFor="validation-comment" style={{ fontWeight: 500, color: '#555', fontSize: '1rem' }}>Commentaire de validation:</label>
+                <textarea id="validation-comment" className="validation-comment" value={validationComment} onChange={(e) => setValidationComment(e.target.value)} placeholder="Ajoutez vos remarques ici..." rows={3} style={{ width: '100%', marginTop: 6, borderRadius: 4, border: '1px solid #d1d5db', padding: 8, fontSize: '1rem' }} />
               </div>
             </div>
+          </Modal.Body>
+          <div style={{ background: '#f8f9fa', borderTop: '1px solid #e5e5e5', padding: '16px 32px', display: 'flex', justifyContent: 'flex-end', gap: 14, borderRadius: '0 0 8px 8px', position: 'sticky', bottom: 0, zIndex: 10 }}>
+            <button className="cancel-btn" style={{ background: '#e0e0e0', color: '#333', border: 'none', borderRadius: 4, padding: '8px 24px', fontWeight: 500, height: '44px' }} onClick={() => setShowValidationModal(false)}>
+              Annuler
+            </button>
+            <button className="confirm-btn" style={{ background: '#16a085', color: 'white', border: 'none', borderRadius: 4, padding: '8px 24px', fontWeight: 500, height: '44px' }} onClick={saveJustification}>
+              Enregistrer
+            </button>
           </div>
-        </div>
+        </Modal>
       )}
       
-      <style jsx>{`
-        .absence-sg-container {
-          padding: var(--space-5);
-          max-width: 1300px;
-          margin: 0 auto;
-          background-color: var(--gray-100);
-        }
-        
-        .page-title {
-          font-size: var(--font-size-2xl);
-          color: var(--primary-dark);
-          margin-bottom: var(--space-5);
-          text-align: center;
-          font-weight: 600;
-        }
-        
-        .back-button {
-          background-color: var(--gray-200);
-          border: none;
-          padding: var(--space-2) var(--space-4);
-          border-radius: var(--radius-md);
-          cursor: pointer;
-          margin-bottom: var(--space-5);
-          display: flex;
-          align-items: center;
-          font-size: var(--font-size-sm);
-          transition: var(--transition-fast);
-        }
-        
-        .back-button:hover {
-          background-color: var(--gray-300);
-          transform: translateX(-3px);
-        }
-        
-        .stats-container {
-          display: flex;
-          gap: var(--space-5);
-          margin-bottom: var(--space-6);
-        }
-        
-        .stat-card {
-          flex: 1;
-          background-color: var(--white);
-          border-radius: var(--radius-lg);
-          padding: var(--space-5);
-          box-shadow: var(--shadow-md);
-          text-align: center;
-          transition: var(--transition-normal);
-        }
-        
-        .stat-card:hover {
-          transform: translateY(-4px);
-          box-shadow: var(--shadow-lg);
-        }
-        
-        .stat-card.absent {
-          border-left: 5px solid var(--danger);
-        }
-        
-        .stat-card.late {
-          border-left: 5px solid var(--warning);
-        }
-        
-        .stat-card h3 {
-          font-size: var(--font-size-md);
-          margin-bottom: var(--space-3);
-          color: var(--gray-700);
-          font-weight: 500;
-        }
-        
-        .stat-value {
-          font-size: var(--font-size-3xl);
-          font-weight: bold;
-          color: var(--gray-900);
-        }
-        
-        .table-filters {
-          display: flex;
-          justify-content: space-between;
-          margin-bottom: 20px;
-          background-color: white;
-          padding: 15px;
-          border-radius: 8px;
-          box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        }
-        
-        .filter-left, .filter-right {
-          display: flex;
-          align-items: center;
-          gap: 10px;
-        }
-        
-        .filter-left label, .filter-right label {
-          font-weight: 500;
-          white-space: nowrap;
-        }
-        
-        .status-label, .search-label {
-          margin-left: 15px;
-        }
-        
-        .select-input, .date-input, .search-input {
-          padding: 8px 12px;
-          border: 1px solid #ddd;
-          border-radius: 4px;
-          font-size: 14px;
-        }
-        
-        .search-input {
-          width: 200px;
-        }
-        
-        .clear-button {
-          background-color: #f0f0f0;
-          border: none;
-          padding: 8px 16px;
-          border-radius: 4px;
-          cursor: pointer;
-          white-space: nowrap;
-        }
-        
-        .clear-button:hover {
-          background-color: #e0e0e0;
-        }
-        
-        .selected-filters {
-          display: flex;
-          justify-content: space-between;
-          background-color: var(--white);
-          padding: var(--space-4);
-          border-radius: var(--radius-lg);
-          margin-bottom: var(--space-4);
-          box-shadow: var(--shadow-md);
-        }
-        
-        .filter-display {
-          display: flex;
-          align-items: center;
-          gap: var(--space-2);
-        }
-        
-        .filter-label {
-          font-weight: 600;
-          color: var(--gray-700);
-        }
-        
-        .filter-value {
-          background-color: var(--primary);
-          color: white;
-          padding: var(--space-2) var(--space-4);
-          border-radius: var(--radius-md);
-          font-size: var(--font-size-md);
-          font-weight: 600;
-          box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-          border: 1px solid var(--primary-dark);
-        }
-        
-        .table-container {
-          background-color: var(--white);
-          border-radius: var(--radius-lg);
-          padding: var(--space-4);
-          box-shadow: var(--shadow-md);
-          overflow-x: auto;
-        }
-        
-        .absence-table {
-          width: 100%;
-          border-collapse: collapse;
-        }
-        
-        .absence-table th, .absence-table td {
-          padding: var(--space-3) var(--space-4);
-          text-align: left;
-          border-bottom: 1px solid var(--gray-200);
-        }
-        
-        .absence-table th {
-          background-color: var(--primary);
-          color: var(--white);
-          font-weight: 600;
-          position: sticky;
-          top: 0;
-        }
-        
-        .absence-table th:first-child {
-          border-top-left-radius: var(--radius-md);
-        }
-        
-        .absence-table th:last-child {
-          border-top-right-radius: var(--radius-md);
-        }
-        
-        .absence-table tr:hover {
-          background-color: var(--gray-100);
-        }
-        
-        .status-row-absent {
-          background-color: var(--danger-bg);
-        }
-        
-        .status-row-late {
-          background-color: var(--warning-bg);
-        }
-        
-        .status-badge {
-          display: inline-block;
-          padding: var(--space-1) var(--space-2);
-          border-radius: var(--radius-md);
-          font-size: var(--font-size-xs);
-          font-weight: 500;
-        }
-        
-        .status-badge.absent {
-          background-color: var(--danger-bg);
-          color: var(--danger);
-          border: 1px solid var(--danger-light);
-        }
-        
-        .status-badge.late {
-          background-color: var(--warning-bg);
-          color: var(--warning);
-          border: 1px solid var(--warning-light);
-        }
-        
-        .status-badge.present {
-          background-color: var(--success-bg);
-          color: var(--success);
-          border: 1px solid var(--success-light);
-        }
-        
-        .view-details-btn {
-          background-color: var(--primary);
-          color: var(--white);
-          border: none;
-          padding: var(--space-1) var(--space-3);
-          border-radius: var(--radius-md);
-          cursor: pointer;
-          font-size: var(--font-size-xs);
-          transition: var(--transition-fast);
-        }
-        
-        .view-details-btn:hover {
-          background-color: var(--primary-dark);
-          transform: translateY(-2px);
-        }
-        
-        .loading-message, .error-message, .no-data-message {
-          padding: var(--space-6);
-          text-align: center;
-          color: var(--gray-600);
-          background-color: var(--gray-100);
-          border-radius: var(--radius-lg);
-        }
-        
-        .error-message {
-          color: var(--danger);
-        }
-        
-        /* Modal styles */
-        .modal-overlay {
-          position: fixed;
-          top: 0;
-          left: 0;
-          right: 0;
-          bottom: 0;
-          background-color: rgba(0, 0, 0, 0.5);
-          display: flex;
-          justify-content: center;
-          align-items: center;
-          z-index: 1000;
-        }
-        
-        .modal-content {
-          background-color: var(--white);
-          border-radius: var(--radius-lg);
-          width: 90%;
-          max-width: 800px;
-          max-height: 90vh;
-          overflow-y: auto;
-          box-shadow: var(--shadow-xl);
-        }
-        
-        .modal-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          padding: var(--space-4) var(--space-5);
-          border-bottom: 1px solid var(--gray-200);
-        }
-        
-        .modal-header h2 {
-          margin: 0;
-          font-size: var(--font-size-xl);
-          color: var(--primary-dark);
-        }
-        
-        .close-button {
-          background: none;
-          border: none;
-          font-size: var(--font-size-2xl);
-          cursor: pointer;
-          color: var(--gray-500);
-          transition: var(--transition-fast);
-        }
-        
-        .close-button:hover {
-          color: var(--danger);
-        }
-        
-        .modal-body {
-          padding: var(--space-5);
-        }
-        
-        .student-info {
-          margin-bottom: var(--space-5);
-          background-color: var(--gray-100);
-          padding: var(--space-4);
-          border-radius: var(--radius-md);
-        }
-        
-        .info-row {
-          display: flex;
-          flex-wrap: wrap;
-          gap: var(--space-5);
-          margin-bottom: var(--space-3);
-        }
-        
-        .info-item {
-          flex: 1;
-          min-width: 200px;
-        }
-        
-        .info-item strong {
-          color: var(--gray-700);
-          margin-right: var(--space-2);
-        }
-        
-        .absence-history h3 {
-          margin-bottom: var(--space-4);
-          font-size: var(--font-size-lg);
-          color: var(--primary-dark);
-        }
-        
-        .student-absences-table {
-          width: 100%;
-          border-collapse: collapse;
-        }
-        
-        .student-absences-table th {
-          background-color: var(--gray-200);
-          padding: var(--space-3);
-          text-align: left;
-          font-weight: 600;
-          border-bottom: 2px solid var(--gray-300);
-          color: var(--gray-800);
-        }
-        
-        .student-absences-table td {
-          padding: var(--space-2) var(--space-3);
-          border-bottom: 1px solid var(--gray-200);
-        }
-        
-        .no-absences-message {
-          padding: var(--space-4);
-          background-color: var(--gray-100);
-          border-radius: var(--radius-md);
-          color: var(--gray-600);
-          text-align: center;
-        }
-        
-        .action-buttons {
-          display: flex;
-          gap: var(--space-2);
-        }
-        
-        .validate-btn {
-          background-color: var(--success);
-          color: var(--white);
-          border: none;
-          padding: var(--space-1) var(--space-3);
-          border-radius: var(--radius-md);
-          cursor: pointer;
-          font-size: var(--font-size-xs);
-          transition: var(--transition-fast);
-        }
-        
-        .validate-btn:hover {
-          background-color: var(--success-dark);
-          transform: translateY(-2px);
-        }
-        
-        .validation-badge {
-          display: inline-block;
-          padding: var(--space-1) var(--space-2);
-          border-radius: var(--radius-md);
-          font-size: var(--font-size-xs);
-          font-weight: 500;
-        }
-        
-        .validation-badge.validated {
-          background-color: var(--success-bg);
-          color: var(--success);
-          border: 1px solid var(--success-light);
-        }
-        
-        .validation-badge.not-validated {
-          background-color: var(--gray-100);
-          color: var(--gray-600);
-          border: 1px solid var(--gray-300);
-        }
-        
-        .validation-info {
-          margin-bottom: var(--space-5);
-        }
-        
-        .validation-info h3 {
-          margin-bottom: var(--space-4);
-          font-size: var(--font-size-lg);
-          color: var(--primary-dark);
-        }
-        
-        .comment-section {
-          margin-top: var(--space-4);
-        }
-        
-        .comment-section label {
-          display: block;
-          margin-bottom: var(--space-2);
-          font-weight: 500;
-          color: var(--gray-700);
-        }
-        
-        .validation-comment {
-          width: 100%;
-          padding: var(--space-3);
-          border: 1px solid var(--gray-300);
-          border-radius: var(--radius-md);
-          font-size: var(--font-size-sm);
-          resize: vertical;
-          margin-bottom: var(--space-4);
-          transition: var(--transition-fast);
-        }
-        
-        .validation-comment:focus {
-          outline: none;
-          border-color: var(--primary);
-          box-shadow: 0 0 0 3px rgba(57, 73, 171, 0.1);
-        }
-        
-        .validation-actions {
-          display: flex;
-          justify-content: flex-end;
-          gap: var(--space-3);
-        }
-        
-        .cancel-btn {
-          background-color: var(--gray-200);
-          border: 1px solid var(--gray-300);
-          padding: var(--space-2) var(--space-4);
-          border-radius: var(--radius-md);
-          cursor: pointer;
-          font-size: var(--font-size-sm);
-          transition: var(--transition-fast);
-        }
-        
-        .cancel-btn:hover {
-          background-color: var(--gray-300);
-        }
-        
-        .confirm-btn {
-          background-color: var(--success);
-          color: var(--white);
-          border: none;
-          padding: var(--space-2) var(--space-4);
-          border-radius: var(--radius-md);
-          cursor: pointer;
-          font-size: var(--font-size-sm);
-          transition: var(--transition-fast);
-        }
-        
-        .confirm-btn:hover {
-          background-color: var(--success-dark);
-        }
-        
-        .reset-container {
-          margin-bottom: 20px;
-          text-align: center;
-          display: flex;
-          justify-content: center;
-          gap: 16px;
-        }
-        
-        .reset-all-button {
-          background-color: #dc3545;
-          color: white;
-          border: none;
-          padding: 10px 20px;
-          border-radius: 4px;
-          font-weight: bold;
-          cursor: pointer;
-          transition: background-color 0.3s;
-        }
-        
-        .reset-all-button:hover {
-          background-color: #c82333;
-        }
-        
-        .reset-all-button:disabled {
-          background-color: #6c757d;
-          cursor: not-allowed;
-        }
-        
-        .validate-all-button {
-          background-color: #28a745;
-          color: white;
-          border: none;
-          padding: 10px 20px;
-          border-radius: 4px;
-          font-weight: bold;
-          cursor: pointer;
-          transition: background-color 0.3s;
-        }
-        
-        .validate-all-button:hover {
-          background-color: #218838;
-        }
-        
-        .validate-all-button:disabled {
-          background-color: #6c757d;
-          cursor: not-allowed;
-        }
-        
-        .day-of-week {
-          display: flex;
-          align-items: center;
-          margin: 0 10px;
-        }
-        
-        .day-of-week label {
-          margin-right: 8px;
-        }
-        
-        .day-display {
-          background-color: #f1f8ff;
-          padding: 8px 12px;
-          border-radius: 4px;
-          font-weight: 600;
-          color: #2c3e50;
-          border: 1px solid #ddd;
-          min-width: 100px;
-          text-align: center;
-        }
-        
-        .report-button {
-          background-color: #2196F3;
-          color: white;
-          border: none;
-          padding: 10px 20px;
-          border-radius: 4px;
-          font-weight: bold;
-          cursor: pointer;
-          transition: background-color 0.3s;
-        }
-        
-        .report-button:hover {
-          background-color: #0d8bf2;
-        }
-        
-        .report-button:disabled {
-          background-color: #6c757d;
-          cursor: not-allowed;
-        }
-        
-        @media (max-width: 768px) {
-          .stats-container {
-            flex-direction: column;
-            gap: var(--space-3);
-          }
-          
-          .selected-filters {
-            flex-direction: column;
-            gap: var(--space-3);
-          }
-          
-          .filter-item {
-            flex: 100%;
-            min-width: 100%;
-          }
-          
-          .clear-button {
-            width: 100%;
-          }
-          
-          .absence-table {
-            font-size: var(--font-size-xs);
-          }
-          
-          .absence-table th, .absence-table td {
-            padding: var(--space-2);
-          }
-          
-          .view-details-btn {
-            width: 100%;
-          }
-          
-          .action-buttons {
-            flex-direction: column;
-            gap: var(--space-1);
-          }
-          
-          .validation-actions {
-            flex-direction: column;
-          }
-          
-          .day-of-week {
-            margin: 5px 0;
-            width: 100%;
-            justify-content: flex-start;
-          }
-          
-          .day-display {
-            flex: 1;
-          }
-        }
-      `}</style>
+      {/* Edit modal */}
+      {showEditModal && editingAbsence && (
+        <Modal show={showEditModal} onHide={() => setShowEditModal(false)} centered dialogClassName="edit-modal-dialog">
+          <Modal.Header closeButton style={{ borderBottom: '1px solid #e5e5e5', background: '#f8f9fa' }}>
+            <Modal.Title style={{ fontWeight: 'bold', fontSize: '1.2rem', color: '#2c3e50' }}>Modifier le statut de présence</Modal.Title>
+          </Modal.Header>
+          <Modal.Body style={{ padding: '28px 32px 20px 32px', background: '#fcfcfc', borderRadius: '0 0 8px 8px', fontSize: '1rem', maxHeight: '60vh', overflowY: 'auto' }}>
+            <div className="edit-info" style={{ display: 'flex', flexDirection: 'column', gap: '28px' }}>
+              <div style={{ borderBottom: '1px solid #e5e5e5', paddingBottom: 16 }}>
+                <h3 style={{ fontSize: '1.12rem', color: '#2980b9', marginBottom: 12 }}>Informations du stagiaire</h3>
+                <div className="info-row" style={{ display: 'flex', gap: 24, marginBottom: 8, fontSize: '1rem' }}>
+                  <div className="info-item"><strong>CEF:</strong> {editingAbsence.cef}</div>
+                  <div className="info-item"><strong>Étudiant:</strong> {getTraineeData(editingAbsence.cef)?.name} {getTraineeData(editingAbsence.cef)?.first_name}</div>
+                </div>
+                <div className="info-row" style={{ display: 'flex', gap: 24, fontSize: '1rem' }}>
+                  <div className="info-item"><strong>Groupe:</strong> {editingAbsence.groupe}</div>
+                  <div className="info-item"><strong>Date:</strong> {formatDate(editingAbsence.date)}</div>
+                </div>
+                <div className="info-row" style={{ display: 'flex', gap: 24, fontSize: '1rem', marginTop: 8 }}>
+                  <div className="info-item"><strong>Formateur:</strong> {editingAbsence.teacher || 'Non spécifié'}</div>
+                  <div className="info-item"><strong>Statut actuel:</strong> <span className={`status-badge ${editingAbsence.status}`} style={{
+                    display: 'inline-block',
+                    padding: '4px 10px',
+                    borderRadius: '4px',
+                    background: editingAbsence.status === 'absent' ? '#e74c3c' : 
+                               editingAbsence.status === 'late' ? '#f39c12' : '#27ae60',
+                    color: 'white',
+                    fontWeight: 'bold'
+                  }}>{editingAbsence.status === 'absent' && 'Absent'}{editingAbsence.status === 'late' && 'Retard'}{editingAbsence.status === 'present' && 'Présent'}</span></div>
+                </div>
+              </div>
+              <div className="edit-status-section" style={{ borderBottom: '1px solid #e5e5e5', paddingBottom: 24 }}>
+                <h3 style={{ fontSize: '1.08rem', color: '#16a085', marginBottom: 16 }}>Nouveau statut</h3>
+                <div className="status-options" style={{ display: 'flex', gap: 20, flexWrap: 'wrap' }}>
+                  <label className={`status-option ${editStatus === 'absent' ? 'selected' : ''}`} style={{ 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    gap: 10, 
+                    fontSize: '1rem',
+                    padding: '10px 16px',
+                    border: '2px solid',
+                    borderColor: editStatus === 'absent' ? '#e74c3c' : '#ddd',
+                    borderRadius: '6px',
+                    background: editStatus === 'absent' ? 'rgba(231, 76, 60, 0.1)' : '#fff',
+                    cursor: 'pointer',
+                    fontWeight: editStatus === 'absent' ? 'bold' : 'normal',
+                    flex: 1,
+                    minWidth: '120px',
+                    justifyContent: 'center'
+                  }}>
+                    <input type="radio" name="editStatus" value="absent" checked={editStatus === 'absent'} onChange={() => setEditStatus('absent')} style={{ marginRight: '5px' }} />
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                      <span className="status-icon" style={{ fontSize: '1.4rem', color: '#e74c3c', marginBottom: '4px' }}>✖</span>
+                      <span className="status-label">Absent</span>
+                    </div>
+                  </label>
+                  <label className={`status-option ${editStatus === 'late' ? 'selected' : ''}`} style={{ 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    gap: 10, 
+                    fontSize: '1rem',
+                    padding: '10px 16px',
+                    border: '2px solid',
+                    borderColor: editStatus === 'late' ? '#f39c12' : '#ddd',
+                    borderRadius: '6px',
+                    background: editStatus === 'late' ? 'rgba(243, 156, 18, 0.1)' : '#fff',
+                    cursor: 'pointer',
+                    fontWeight: editStatus === 'late' ? 'bold' : 'normal',
+                    flex: 1,
+                    minWidth: '120px',
+                    justifyContent: 'center'
+                  }}>
+                    <input type="radio" name="editStatus" value="late" checked={editStatus === 'late'} onChange={() => setEditStatus('late')} style={{ marginRight: '5px' }} />
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                      <span className="status-icon" style={{ fontSize: '1.4rem', color: '#f39c12', marginBottom: '4px' }}>🕒</span>
+                      <span className="status-label">Retard</span>
+                    </div>
+                  </label>
+                  <label className={`status-option ${editStatus === 'present' ? 'selected' : ''}`} style={{ 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    gap: 10, 
+                    fontSize: '1rem',
+                    padding: '10px 16px',
+                    border: '2px solid',
+                    borderColor: editStatus === 'present' ? '#27ae60' : '#ddd',
+                    borderRadius: '6px',
+                    background: editStatus === 'present' ? 'rgba(39, 174, 96, 0.1)' : '#fff',
+                    cursor: 'pointer',
+                    fontWeight: editStatus === 'present' ? 'bold' : 'normal',
+                    flex: 1,
+                    minWidth: '120px',
+                    justifyContent: 'center'
+                  }}>
+                    <input type="radio" name="editStatus" value="present" checked={editStatus === 'present'} onChange={() => setEditStatus('present')} style={{ marginRight: '5px' }} />
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                      <span className="status-icon" style={{ fontSize: '1.4rem', color: '#27ae60', marginBottom: '4px' }}>✓</span>
+                      <span className="status-label">Présent</span>
+                    </div>
+                  </label>
+                </div>
+              </div>
+              <div style={{ padding: '10px', background: '#f8f9fa', borderRadius: '6px', borderLeft: '4px solid #3498db' }}>
+                <p style={{ margin: '0', fontSize: '0.9rem', color: '#555' }}>
+                  <strong>Note:</strong> La modification du statut de présence impactera le calcul des heures d'absence et des notes disciplinaires du stagiaire.
+                </p>
+              </div>
+            </div>
+          </Modal.Body>
+          <div style={{ background: '#f8f9fa', borderTop: '1px solid #e5e5e5', padding: '16px 32px', display: 'flex', justifyContent: 'flex-end', gap: 14, borderRadius: '0 0 8px 8px', position: 'sticky', bottom: 0, zIndex: 10 }}>
+            <button className="cancel-btn" style={{ background: '#e0e0e0', color: '#333', border: 'none', borderRadius: '4px', padding: '8px 24px', fontWeight: '500', height: '44px' }} onClick={() => setShowEditModal(false)}>
+              Annuler
+            </button>
+            <button 
+              className="confirm-btn" 
+              style={{ 
+                background: editStatus === 'absent' ? '#e74c3c' : 
+                         editStatus === 'late' ? '#f39c12' : 
+                         editStatus === 'present' ? '#27ae60' : '#16a085', 
+                color: 'white', 
+                border: 'none', 
+                borderRadius: '4px', 
+                padding: '8px 24px', 
+                fontWeight: '500', 
+                height: '44px',
+                opacity: editStatus === editingAbsence.status ? 0.6 : 1,
+                cursor: editStatus === editingAbsence.status ? 'not-allowed' : 'pointer'
+              }} 
+              onClick={saveEditedAbsence} 
+              disabled={editStatus === editingAbsence.status}
+            >
+              Enregistrer les modifications
+            </button>
+          </div>
+        </Modal>
+      )}
+      
+      {/* Validation confirmation modal */}
+      {showValidationConfirm && (
+        <Modal show={showValidationConfirm} onHide={() => setShowValidationConfirm(false)} centered>
+          <Modal.Header closeButton style={{ borderBottom: '1px solid #e5e5e5', background: '#f8f9fa' }}>
+            <Modal.Title style={{ fontWeight: 'bold', fontSize: '1.2rem', color: '#2c3e50' }}>Confirmer la validation</Modal.Title>
+          </Modal.Header>
+          <Modal.Body style={{ padding: '24px 32px 20px 32px', background: '#fcfcfc', borderRadius: '0 0 8px 8px' }}>
+            <div style={{ fontSize: '1.05rem', color: '#333', marginBottom: 18 }}>
+              Voulez-vous vraiment valider toutes les absences du groupe <b>{filterGroup}</b> pour cette session ?
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
+              <button className="cancel-btn" style={{ background: '#e0e0e0', color: '#333', border: 'none', borderRadius: 4, padding: '8px 18px', fontWeight: 500 }} onClick={() => setShowValidationConfirm(false)}>
+                Annuler
+              </button>
+              <button className="confirm-btn" style={{ background: '#16a085', color: 'white', border: 'none', borderRadius: 4, padding: '8px 18px', fontWeight: 500 }} onClick={confirmBulkValidation}>
+                Valider
+              </button>
+            </div>
+          </Modal.Body>
+        </Modal>
+      )}
+      
+      {/* Toast notification */}
+      {toast.show && (
+        <div 
+          className={`toast-notification ${toast.type}`}
+          style={{
+            position: 'fixed',
+            top: '20px',
+            right: '20px',
+            padding: '12px 20px',
+            borderRadius: '4px',
+            backgroundColor: toast.type === 'success' ? '#4caf50' : 
+                             toast.type === 'warning' ? '#ff9800' : '#f44336',
+            color: 'white',
+            boxShadow: '0 4px 8px rgba(0,0,0,0.2)',
+            zIndex: 1000,
+            animation: 'fadeIn 0.3s ease-out'
+          }}
+        >
+          <span>{toast.message}</span>
+          <button 
+            onClick={hideToast}
+            style={{
+              background: 'none',
+              border: 'none',
+              color: 'white',
+              marginLeft: '10px',
+              cursor: 'pointer',
+              fontSize: '16px'
+            }}
+          >
+            ×
+          </button>
+        </div>
+      )}
     </div>
   );
 };

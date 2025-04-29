@@ -22,6 +22,23 @@ const ManagerTrainees = () => {
     const savedGroups = localStorage.getItem('availableGroups');
     return savedGroups ? JSON.parse(savedGroups) : [];
   });
+  
+  // Add state for disciplinary state filter
+  const [selectedDisciplinaryState, setSelectedDisciplinaryState] = useState("");
+  
+  // Define all possible disciplinary states
+  const disciplinaryStates = [
+    { value: "", label: "Tous les états" },
+    { value: "NORMAL", label: "Normal" },
+    { value: "1er AVERT (SC)", label: "Première Mise en Garde" },
+    { value: "2ème AVERT (SC)", label: "Deuxième Mise en Garde" },
+    { value: "1er MISE (CD)", label: "Premier Avertissement" },
+    { value: "2ème MISE (CD)", label: "Deuxième Avertissement" },
+    { value: "BLÂME (CD)", label: "Blâme" },
+    { value: "SUSP 2J (CD)", label: "Exclusion de 2 Jours" },
+    { value: "EXCL TEMP (CD)", label: "Exclusion Temporaire" },
+    { value: "EXCL DEF (CD)", label: "Exclusion Définitive" }
+  ];
 
   // Get userRole from localStorage 
   const userRole = localStorage.getItem("userRole");
@@ -150,13 +167,29 @@ const ManagerTrainees = () => {
     }
     
     // Apply class filter (always required now)
-      filtered = filtered.filter(trainee => trainee.class === selectedGroupe);
+    filtered = filtered.filter(trainee => trainee.class === selectedGroupe);
+    
+    // Apply disciplinary state filter if selected
+    if (selectedDisciplinaryState) {
+      filtered = filtered.filter(trainee => {
+        const traineeAbsences = getTraineeAbsences(trainee);
+        const absenceHours = calculateAbsenceHours(traineeAbsences);
+        const status = getTraineeStatus(absenceHours);
+        return status.text === selectedDisciplinaryState;
+      });
+    }
 
     setFilteredStagiaires(filtered);
   };
 
   const handleGroupeChange = (e) => {
     setSelectedGroupe(e.target.value);
+    // We'll apply the filter when the "Filtrer" button is clicked
+  };
+  
+  // Handler for disciplinary state filter change
+  const handleDisciplinaryStateChange = (e) => {
+    setSelectedDisciplinaryState(e.target.value);
     // We'll apply the filter when the "Filtrer" button is clicked
   };
 
@@ -198,7 +231,17 @@ const ManagerTrainees = () => {
     });
     
     // Apply group filter (always required now)
-    const result = filtered.filter(trainee => trainee.class === selectedGroupe);
+    let result = filtered.filter(trainee => trainee.class === selectedGroupe);
+    
+    // Apply disciplinary state filter if selected
+    if (selectedDisciplinaryState) {
+      result = result.filter(trainee => {
+        const traineeAbsences = getTraineeAbsences(trainee);
+        const absenceHours = calculateAbsenceHours(traineeAbsences);
+        const status = getTraineeStatus(absenceHours);
+        return status.text === selectedDisciplinaryState;
+      });
+    }
     
     setFilteredStagiaires(result);
   };
@@ -608,6 +651,7 @@ const ManagerTrainees = () => {
             // Column C (index 2) = Nom (Name), starting from row 5
             // Column D (index 3) = Prénom (First Name), starting from row 5
             // Column E (index 4) = Classe (Class), starting from row 5
+            // Column F (index 5) = Téléphone (Telephone), starting from row 5
             // Column O (index 14) = Absence count, starting from row 5
             
             // Convert to array with specific options to get all rows
@@ -631,6 +675,7 @@ const ManagerTrainees = () => {
                 name: 2,    // Column C (index 2)
                 firstName: 3, // Column D (index 3)
                 class: 4,     // Column E (index 4)
+                telephone: 5, // Column F (index 5) - Added for phone number
                 absence: 14   // Column O (index 14)
               };
               
@@ -648,6 +693,7 @@ const ManagerTrainees = () => {
                   name: row[columnMapping.name] ? String(row[columnMapping.name]) : '',
                   first_name: row[columnMapping.firstName] ? String(row[columnMapping.firstName]) : '',
                   class: row[columnMapping.class] ? String(row[columnMapping.class]) : '',
+                  phone: row[columnMapping.telephone] ? String(row[columnMapping.telephone]) : '',
                   absence_count: row[columnMapping.absence] ? parseInt(row[columnMapping.absence], 10) || 0 : 0,
                   registration_date: new Date().toISOString().split('T')[0],
                   import_source: file.name,
@@ -1050,6 +1096,9 @@ const ManagerTrainees = () => {
           class: columnIndices.groupIndex !== -1 && columnIndices.groupIndex < values.length 
             ? values[columnIndices.groupIndex] || 'Inconnue' 
             : 'Inconnue',
+          phone: columnIndices.phoneIndex !== -1 && columnIndices.phoneIndex < values.length 
+            ? values[columnIndices.phoneIndex] || '' 
+            : '',
           absence_count: 0, // Absence count may not be available in the Excel file
           registration_date: new Date().toISOString().split('T')[0],
           import_source: file.name,
@@ -1115,6 +1164,7 @@ const ManagerTrainees = () => {
     const yearAlternatives = ['année', 'annee', 'an', 'year', 'academic year', 'année académique', 'annee academique', 'niveau', 'level'];
     const fieldAlternatives = ['filière', 'filiere', 'field', 'speciality', 'spécialité', 'specialite', 'formation', 'program', 'programme'];
     const groupAlternatives = ['groupe', 'group', 'grp', 'class', 'classe', 'section', 'gr'];
+    const phoneAlternatives = ['téléphone', 'telephone', 'tel', 'phone', 'mobile', 'gsm', 'portable', 'contact', 'num tel', 'numéro tel']; 
     
     // Add debug info to see what's happening with column detection
     for (let i = 0; i < lowerCaseHeaders.length; i++) {
@@ -1126,6 +1176,7 @@ const ManagerTrainees = () => {
       console.log(`  - FirstName match: ${firstNameAlternatives.some(alt => header.includes(alt))}`);
       console.log(`  - LastName match: ${lastNameAlternatives.some(alt => header.includes(alt))}`);
       console.log(`  - Group/Class match: ${groupAlternatives.some(alt => header.includes(alt))}`);
+      console.log(`  - Phone match: ${phoneAlternatives.some(alt => header.includes(alt))}`);
     }
 
     // Find column indices
@@ -1135,10 +1186,11 @@ const ManagerTrainees = () => {
     let yearIndex = lowerCaseHeaders.findIndex(h => yearAlternatives.some(alt => h.includes(alt)));
     let fieldIndex = lowerCaseHeaders.findIndex(h => fieldAlternatives.some(alt => h.includes(alt)));
     let groupIndex = lowerCaseHeaders.findIndex(h => groupAlternatives.some(alt => h.includes(alt)));
+    let phoneIndex = lowerCaseHeaders.findIndex(h => phoneAlternatives.some(alt => h.includes(alt)));
 
     // Log detected indices for debugging
     console.log('Detected column indices:', {
-      idIndex, firstNameIndex, lastNameIndex, yearIndex, fieldIndex, groupIndex
+      idIndex, firstNameIndex, lastNameIndex, yearIndex, fieldIndex, groupIndex, phoneIndex
     });
 
     // Check if any of the required columns (ID, first name, last name) are missing
@@ -1185,7 +1237,8 @@ const ManagerTrainees = () => {
           lastNameIndex,
           yearIndex,
           fieldIndex,
-          groupIndex
+          groupIndex,
+          phoneIndex
         };
       }
       
@@ -1196,8 +1249,11 @@ const ManagerTrainees = () => {
         idIndex = 0;
         firstNameIndex = 1;
         lastNameIndex = 2;
+        if (headers.length >= 6) {
+          phoneIndex = 5; // Assume phone is in column F (index 5)
+        }
         
-        console.log('Using positional fallback: ID=0, FirstName=1, LastName=2');
+        console.log('Using positional fallback: ID=0, FirstName=1, LastName=2, Phone=5');
       }
       
       // If we still don't have the required columns, show warning and return null
@@ -1214,7 +1270,8 @@ const ManagerTrainees = () => {
       lastNameIndex,
       yearIndex,
       fieldIndex,
-      groupIndex
+      groupIndex,
+      phoneIndex
     };
   };
 
@@ -1429,113 +1486,149 @@ const ManagerTrainees = () => {
 
           <div className="form-controls">
             <div className="control-row">
-          <div className="control-group">
-            <label>Groupe</label>
-            <select
-              value={selectedGroupe}
-              onChange={handleGroupeChange}
-            >
-              <option value="">Choisir le groupe</option>
+              <div className="control-group">
+                <label>Groupe</label>
+                <select
+                  value={selectedGroupe}
+                  onChange={handleGroupeChange}
+                  className="enhanced-select"
+                >
+                  <option value="">Choisir le groupe</option>
                   {availableGroups.map((groupe) => (
-                <option key={groupe} value={groupe}>
-                  {groupe}
-                </option>
-              ))}
-            </select>
+                    <option key={groupe} value={groupe}>
+                      {groupe}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              
+              {/* Add new disciplinary state filter dropdown */}
+              <div className="control-group">
+                <label>État Disciplinaire</label>
+                <select
+                  value={selectedDisciplinaryState}
+                  onChange={handleDisciplinaryStateChange}
+                  className="enhanced-select"
+                >
+                  {disciplinaryStates.map((state) => (
+                    <option key={state.value} value={state.value}>
+                      {state.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="control-group">
+                <button onClick={handleFilter} className="submit-button enhanced-button">
+                  <i className="filter-icon">🔍</i> Filtrer
+                </button>
+              </div>
+            </div>
+
+            <div className="control-row">
+              <div className="control-group full-width">
+                <label>Rechercher</label>
+                <div className="search-input-wrapper">
+                  <i className="search-icon">🔍</i>
+                  <input
+                    type="text"
+                    placeholder="Rechercher par nom, prénom ou CEF..."
+                    value={searchTerm}
+                    onChange={handleSearchChange}
+                    className="enhanced-input"
+                  />
+                </div>
+              </div>
+            </div>
           </div>
 
-          <div className="control-group">
-            <button onClick={handleFilter} className="submit-button">
-              Filtrer
-            </button>
+          {/* Move "Gérer les absences" button above the table */}
+          <div className="manage-absences-container">
+            <NavLink to="/sg/absence">
+              <button className="manage-absences-button enhanced-button">Gérer les absences</button>
+            </NavLink>
           </div>
-        </div>
 
-        <div className="control-row">
-          <div className="control-group full-width">
-            <label>Rechercher</label>
-            <input
-              type="text"
-                  placeholder="Rechercher par nom, prénom ou CEF..."
-              value={searchTerm}
-              onChange={handleSearchChange}
-            />
-          </div>
-        </div>
-      </div>
+          {/* Use the new selected filters display instead of just the group */}
+          {(selectedGroupe || selectedDisciplinaryState) && (
+            <div className="selected-filters-display">
+              {selectedGroupe && (
+                <div className="filter-item">
+                  <div className="filter-label">Groupe:</div>
+                  <div className="filter-value" style={{ color: 'white' }}>{selectedGroupe}</div>
+                </div>
+              )}
+              
+              {selectedDisciplinaryState && (
+                <div className="filter-item">
+                  <div className="filter-label">État Disciplinaire:</div>
+                  <div className="filter-value" style={{ color: 'white' }}>
+                    {disciplinaryStates.find(state => state.value === selectedDisciplinaryState)?.label || selectedDisciplinaryState}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
-      {/* Move "Gérer les absences" button above the table */}
-      <div className="manage-absences-container">
-        <NavLink to="/sg/absence">
-          <button className="manage-absences-button">Gérer les absences</button>
-        </NavLink>
-      </div>
-
-      {/* Display selected group above table */}
-      {selectedGroupe && (
-        <div className="selected-group-display">
-          <div className="filter-label">Groupe sélectionné:</div>
-          <div className="filter-value">{selectedGroupe}</div>
-        </div>
-      )}
-
-      <div className="absence-table-container">
-        <table className="absence-table">
-          <thead>
-            <tr>
-              <th>CEF</th>
-              <th>NOM ET PRÉNOM</th> {/* Combined name column */}
-              <th>HEURES D'ABSENCE</th> {/* Updated column name */}
-              <th>ÉTAT</th> {/* New column for status */}
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filteredStagiaires.length > 0 ? (
-              filteredStagiaires.map((trainee, index) => {
-                // Get absences for this trainee
-                const traineeAbsences = getTraineeAbsences(trainee);
-                // Calculate absence hours
-                const absenceHours = calculateAbsenceHours(traineeAbsences);
-                // Get status based on absence hours
-                const status = getTraineeStatus(absenceHours);
-                
-                return (
-                    <tr key={trainee.id || index}>
-                      <td>{trainee.cef}</td>
-                    <td>{trainee.name} {trainee.first_name}</td> {/* Combined name */}
-                    <td>{absenceHours} h</td> {/* Dynamic absence hours */}
-                    <td>
-                      <span 
-                        className="status-badge" 
-                        style={{ backgroundColor: status.color, color: ['yellow', 'lightgreen'].includes(status.color) ? '#333' : 'white' }}
-                      >
-                        {status.text}
-                      </span>
-                    </td>
-                  <td>
-                    <button
-                          onClick={() => handleViewDetails(trainee)}
-                      className="view-details-button"
-                    >
-                      Voir Détails
-                    </button>
-                  </td>
+          <div className="absence-table-container">
+            <table className="absence-table">
+              <thead>
+                <tr>
+                  <th>CEF</th>
+                  <th>NOM ET PRÉNOM</th> {/* Combined name column */}
+                  <th>TÉLÉPHONE</th> {/* Added phone column */}
+                  <th>HEURES D'ABSENCE</th> {/* Updated column name */}
+                  <th>ÉTAT</th> {/* New column for status */}
+                  <th>Actions</th>
                 </tr>
-                );
-              })
-            ) : (
-              <tr>
-                <td colSpan="5" className="no-data-message">
-                  {selectedGroupe 
-                    ? "Aucun stagiaire trouvé. Ajustez votre recherche."
-                    : "Veuillez sélectionner un groupe pour afficher les stagiaires."}
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+              </thead>
+              <tbody>
+                {filteredStagiaires.length > 0 ? (
+                  filteredStagiaires.map((trainee, index) => {
+                    // Get absences for this trainee
+                    const traineeAbsences = getTraineeAbsences(trainee);
+                    // Calculate absence hours
+                    const absenceHours = calculateAbsenceHours(traineeAbsences);
+                    // Get status based on absence hours
+                    const status = getTraineeStatus(absenceHours);
+                    
+                    return (
+                        <tr key={trainee.id || index}>
+                          <td>{trainee.cef}</td>
+                          <td>{trainee.name} {trainee.first_name}</td> {/* Combined name */}
+                          <td>{trainee.phone || trainee.TELEPHONE || trainee.TEL || "-"}</td> {/* Display phone number */}
+                          <td>{absenceHours} h</td> {/* Dynamic absence hours */}
+                          <td>
+                          <span 
+                            className="status-badge" 
+                            style={{ backgroundColor: status.color, color: ['yellow', 'lightgreen'].includes(status.color) ? '#333' : 'white' }}
+                          >
+                            {status.text}
+                          </span>
+                        </td>
+                      <td>
+                        <button
+                              onClick={() => handleViewDetails(trainee)}
+                          className="view-details-button"
+                        >
+                          Voir Détails
+                        </button>
+                      </td>
+                    </tr>
+                    );
+                  })
+                ) : (
+                  <tr>
+                    <td colSpan="6" className="no-data-message">
+                      {selectedGroupe 
+                        ? "Aucun stagiaire trouvé. Ajustez votre recherche."
+                        : "Veuillez sélectionner un groupe pour afficher les stagiaires."}
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </>
       )}
 
@@ -1552,6 +1645,10 @@ const ManagerTrainees = () => {
                   <div className="detail-item">
                   <span className="detail-label">Nom Complet:</span> 
                   <span className="detail-value">{selectedStagiaire.name} {selectedStagiaire.first_name}</span>
+                  </div>
+                  <div className="detail-item">
+                  <span className="detail-label">Téléphone:</span> 
+                  <span className="detail-value">{selectedStagiaire.phone || selectedStagiaire.TELEPHONE || selectedStagiaire.TEL || "Non spécifié"}</span>
                   </div>
                   <div className="detail-item">
                   <span className="detail-label">Heures d'Absence:</span> 
@@ -2362,6 +2459,181 @@ const ManagerTrainees = () => {
           font-size: 14px;
           color: #666;
           margin-top: 5px;
+        }
+
+        .selected-filters-display {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 1rem;
+          background-color: #f9f9f9;
+          padding: 0.8rem;
+          border-radius: 6px;
+          margin-bottom: 1rem;
+          border: 1px solid #e0e0e0;
+        }
+        
+        .filter-item {
+          display: flex;
+          align-items: center;
+          background-color: white;
+          padding: 0.5rem 0.8rem;
+          border-radius: 4px;
+          box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+        
+        .filter-label {
+          font-weight: 600;
+          color: #555;
+          margin-right: 0.5rem;
+        }
+        
+        .filter-value {
+          color: #3f51b5;
+          font-weight: 500;
+        }
+        
+        .control-row {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 1rem;
+          margin-bottom: 1rem;
+        }
+
+        .enhanced-select,
+        .enhanced-input {
+          padding: 0.75rem 1rem;
+          border-radius: 8px;
+          border: 1px solid #dce0e6;
+          background-color: white;
+          font-size: 1rem;
+          box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
+          transition: all 0.3s ease;
+          width: 100%;
+        }
+        
+        .enhanced-select {
+          appearance: none;
+          background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23555555'%3E%3Cpath d='M7 10l5 5 5-5z'/%3E%3C/svg%3E");
+          background-repeat: no-repeat;
+          background-position: right 10px center;
+          background-size: 20px;
+          padding-right: 35px;
+        }
+        
+        .enhanced-select:hover,
+        .enhanced-input:hover {
+          border-color: #b9c5ef;
+        }
+        
+        .enhanced-select:focus,
+        .enhanced-input:focus {
+          border-color: #4568dc;
+          box-shadow: 0 0 0 3px rgba(69, 104, 220, 0.1);
+          outline: none;
+        }
+        
+        .enhanced-button {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          gap: 0.5rem;
+          padding: 0.75rem 1.5rem;
+          font-weight: 600;
+          border-radius: 8px;
+          transition: all 0.3s ease;
+          border: none;
+          cursor: pointer;
+          box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+        }
+        
+        .enhanced-button:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        }
+        
+        .submit-button.enhanced-button {
+          background: linear-gradient(135deg, #4568dc, #3f5efb);
+          color: white;
+        }
+        
+        .manage-absences-button.enhanced-button {
+          background: linear-gradient(135deg, #e74c3c, #c0392b);
+          color: white;
+        }
+        
+        .search-input-wrapper {
+          position: relative;
+          width: 100%;
+        }
+        
+        .search-icon {
+          position: absolute;
+          left: 12px;
+          top: 50%;
+          transform: translateY(-50%);
+          color: #6c757d;
+          font-style: normal;
+        }
+        
+        .enhanced-input {
+          padding-left: 40px;
+        }
+        
+        .selected-filters-display {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 1rem;
+          background-color: #f5f8ff;
+          padding: 1rem;
+          border-radius: 8px;
+          margin-bottom: 1.5rem;
+          border: 1px solid #dce0e6;
+          box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
+        }
+        
+        .filter-item {
+          display: flex;
+          align-items: center;
+          background-color: white;
+          padding: 0.6rem 1rem;
+          border-radius: 6px;
+          box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+          border-left: 3px solid #4568dc;
+        }
+        
+        .filter-label {
+          font-weight: 600;
+          color: #555;
+          margin-right: 0.5rem;
+        }
+        
+        .filter-value {
+          color: #4568dc;
+          font-weight: 500;
+        }
+        
+        .control-row {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 1rem;
+          margin-bottom: 1.5rem;
+          align-items: flex-end;
+        }
+        
+        .control-group {
+          flex: 1;
+          min-width: 200px;
+        }
+        
+        .control-group label {
+          display: block;
+          margin-bottom: 0.5rem;
+          font-weight: 500;
+          color: #495057;
+        }
+        
+        .full-width {
+          flex-basis: 100%;
         }
       `}</style>
     </div>

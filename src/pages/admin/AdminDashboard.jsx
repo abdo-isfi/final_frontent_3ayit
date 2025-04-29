@@ -15,17 +15,21 @@ const AdminDashboard = () => {
       justifyContent: 'space-between',
       alignItems: 'center',
       marginBottom: '2rem',
+      textAlign: 'center',
     },
     title: {
       color: '#333',
       fontSize: '2rem',
-      margin: 0,
+      margin: '0 auto',
     },
     dashboardGrid: {
       display: 'grid',
       gridTemplateColumns: 'repeat(auto-fill, minmax(350px, 1fr))',
-      gap: '2rem',
+      gap: '3rem',
       marginTop: '2rem',
+      justifyContent: 'center',
+      alignItems: 'center',
+      padding: '0 2rem',
     },
     card: {
       backgroundColor: 'white',
@@ -34,13 +38,14 @@ const AdminDashboard = () => {
       overflow: 'hidden',
       transition: 'transform 0.3s ease, box-shadow 0.3s ease',
       cursor: 'pointer',
+      maxWidth: '400px',
+      margin: '0 auto',
     },
     cardHover: {
       transform: 'translateY(-5px)',
       boxShadow: '0 10px 15px rgba(0, 0, 0, 0.1), 0 4px 6px rgba(0, 0, 0, 0.08)',
     },
     cardTop: {
-      backgroundColor: '#3498db',
       padding: '1.5rem',
       display: 'flex',
       justifyContent: 'center',
@@ -85,15 +90,15 @@ const AdminDashboard = () => {
       </div>
       
       <div style={styles.dashboardGrid}>
-        {/* Gérer les formateurs */}
+        {/* Gérer les utilisateurs */}
         <div style={styles.card} className="dashboard-card">
           <div style={{...styles.cardTop, backgroundColor: '#3498db'}}>
             <span style={styles.cardIcon}>👤</span>
           </div>
           <div style={styles.cardContent}>
-            <h2 style={styles.cardTitle}>Gérer les formateurs</h2>
+            <h2 style={styles.cardTitle}>Gérer les utilisateurs</h2>
             <p style={styles.cardDescription}>
-              Ajouter, modifier ou supprimer des formateurs. Assignez des groupes aux formateurs.
+              Ajouter, modifier ou supprimer des utilisateurs du système.
             </p>
             <Link to="/admin/gerer" style={styles.cardButton} className="card-button">
               Gérer
@@ -101,7 +106,23 @@ const AdminDashboard = () => {
           </div>
         </div>
 
-        
+        {/* Gérer les formateurs */}
+        <div style={styles.card} className="dashboard-card">
+          <div style={{...styles.cardTop, backgroundColor: '#2ecc71'}}>
+            <span style={styles.cardIcon}>🧑‍🏫</span>
+          </div>
+          <div style={styles.cardContent}>
+            <h2 style={styles.cardTitle}>Gérer les formateurs</h2>
+            <p style={styles.cardDescription}>
+              Ajouter, modifier ou supprimer des formateurs. Assignez des groupes aux formateurs.
+            </p>
+            <Link to="/admin/ajouter" style={styles.cardButton} className="card-button">
+              Gérer
+            </Link>
+          </div>
+        </div>
+
+    
         
       </div>
     </div>

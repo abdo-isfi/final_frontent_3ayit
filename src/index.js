@@ -2,7 +2,7 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import App from './App.js';
-import './index.css';
+import './styles/main.css';
 import '@fortawesome/fontawesome-free/css/all.min.css';
 import UserProvider from './context/UserContext.js';
 

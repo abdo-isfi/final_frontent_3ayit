@@ -1,6 +1,4 @@
 import DashboardCard from "../../components/DashboardCard.jsx";
-import scheduleImage from "./../../images/emploie.png";
-import absenceImage from "./../../images/absence.jpg";
 import "./../../index.css";
 
 const Dashboard = () => {
@@ -13,14 +11,14 @@ const Dashboard = () => {
           title="Emploi du Temps"
           subtitle="Visualiser votre emploi du temps personnel"
           path="/emploi-du-temps"
-          image={scheduleImage}
+          iconBgColor="#3498db"
         />
 
         <DashboardCard
           title="Gestion des Absences"
           subtitle="Gestion des absences des stagiaires"
           path="/gerer-absence"
-          image={absenceImage}
+          iconBgColor="#e74c3c"
         />
       </div>
     </div>
